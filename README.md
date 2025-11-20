@@ -4,7 +4,7 @@
 
 ### Decentralized File Transfer Protocol
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 [![Sui](https://img.shields.io/badge/Blockchain-Sui-4DA2FF)](https://sui.io)
 [![Walrus](https://img.shields.io/badge/Storage-Walrus-00D4AA)](https://walrus.site)
 [![Status](https://img.shields.io/badge/status-active-success.svg)]()
