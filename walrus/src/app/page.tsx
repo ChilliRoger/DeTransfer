@@ -128,7 +128,7 @@ export default function Home() {
     try {
       setStatus("Encrypting file...");
       setError("");
-      
+
       // Encrypt file data
       const buffer = new Uint8Array(await file.arrayBuffer());
       // Normalize recipient address to ensure consistent format
@@ -141,18 +141,18 @@ export default function Home() {
       });
 
       setStatus("Uploading to Walrus...");
-      
+
       // Create encrypted file for upload
       const encryptedFile = new File([encryptedObject], file.name, {
         type: file.type || "application/octet-stream"
       });
-      
+
       // Upload directly to Walrus HTTP API
       const { uploadToWalrus } = await import('../lib/walrus/client');
       const newBlobId = await uploadToWalrus(encryptedFile);
-      
+
       setBlobId(newBlobId);
-      
+
       // Save to database
       await fetch('/api/files', {
         method: 'POST',
@@ -166,7 +166,7 @@ export default function Home() {
           recipientAddress: normalizeSuiAddress(recipientAddress),
         }),
       });
-      
+
       setCurrentStep(1);
       setStatus("Success! Encrypted file stored on Walrus.");
     } catch (e: any) {
@@ -181,15 +181,15 @@ export default function Home() {
     try {
       setIsDownloading(true);
       setStatus("Fetching file from Walrus...");
-      
+
       // Download using HTTP API
       const { downloadFromWalrus } = await import('../lib/walrus/client');
       const encryptedBlob = await downloadFromWalrus(blobId);
       const encryptedBytes = new Uint8Array(await encryptedBlob.arrayBuffer());
-      
+
       // Decrypt the file (assuming it's encrypted)
       if (!account) throw new Error("Please connect your wallet to decrypt this file.");
-      
+
       setStatus("Creating session key...");
       // Normalize address for session key creation
       const normalizedAccountAddress = normalizeSuiAddress(account.address);
@@ -199,16 +199,16 @@ export default function Home() {
         ttlMin: 5,
         suiClient: client,
       });
-      
+
       // ✅ CRITICAL: Sign the session key's personal message
       setStatus("Please sign the personal message in your wallet...");
       const { signature } = await signPersonalMessage({
         message: sessionKey.getPersonalMessage(),
       });
       sessionKey.setPersonalMessageSignature(signature);
-      
+
       setStatus("Decrypting file...");
-      
+
       // Get recipient address - fetch from database if not in state
       let decryptRecipientAddress = recipientAddress;
       if (!decryptRecipientAddress && blobId) {
@@ -224,23 +224,23 @@ export default function Home() {
           console.warn("Could not fetch recipient address from database", e);
         }
       }
-      
+
       // Fallback to current account address if still not found
       decryptRecipientAddress = decryptRecipientAddress || account.address;
       if (!decryptRecipientAddress) {
         throw new Error("Recipient address is required for decryption. Please ensure the file was encrypted for your wallet address.");
       }
-      
+
       // Normalize addresses for comparison
       const normalizedAccount = normalizeSuiAddress(account.address);
       const normalizedRecipient = normalizeSuiAddress(decryptRecipientAddress);
-      
+
       // ✅ CRITICAL: Verify that the current user is the recipient
       // The bottled_message access policy only allows the recipient to decrypt
       if (normalizedAccount !== normalizedRecipient) {
         throw new Error(`Access denied: This file was encrypted for address ${normalizedRecipient}, but you are connected with ${normalizedAccount}. Only the recipient can decrypt this file.`);
       }
-      
+
       const tx = new Transaction();
       // Set the sender to the recipient address (must match account.address)
       tx.setSender(normalizedAccount);
@@ -248,15 +248,16 @@ export default function Home() {
         target: `${SEAL_PACKAGE_ID}::${SEAL_MODULE}::seal_approve`,
         arguments: [tx.pure.vector("u8", fromHex(normalizedRecipient))],
       });
-      
+
       // @ts-ignore
       const txBytes = await tx.build({ client, onlyTransactionKind: true });
       // @ts-ignore
       const decryptedBytes = await sealClient.decrypt({ data: encryptedBytes, sessionKey, txBytes });
-      
-      const blob = new Blob([decryptedBytes], { type: file?.type || "application/octet-stream" });
+
+      const decryptedArray = new Uint8Array(decryptedBytes);
+      const blob = new Blob([decryptedArray], { type: file?.type || "application/octet-stream" });
       let downloadName = file?.name || `walrus_file_${blobId.slice(0, 6)}`;
-      
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -316,11 +317,10 @@ export default function Home() {
                   setHistoryTab("uploads");
                   loadUserFiles();
                 }}
-                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                  historyTab === "uploads"
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${historyTab === "uploads"
                     ? "border-blue-500 text-blue-600"
                     : "border-transparent text-slate-500 hover:text-slate-700"
-                }`}
+                  }`}
               >
                 My Uploads ({userFiles.length})
               </button>
@@ -329,11 +329,10 @@ export default function Home() {
                   setHistoryTab("shared");
                   loadSharedFiles();
                 }}
-                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                  historyTab === "shared"
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${historyTab === "shared"
                     ? "border-blue-500 text-blue-600"
                     : "border-transparent text-slate-500 hover:text-slate-700"
-                }`}
+                  }`}
               >
                 Shared with Me ({sharedFiles.length})
               </button>
