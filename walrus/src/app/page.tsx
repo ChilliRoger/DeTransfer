@@ -1,13 +1,15 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import { ConnectButton, useCurrentAccount, useSignAndExecuteTransaction, useSignPersonalMessage } from "@mysten/dapp-kit";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui/client";
 import { Transaction } from "@mysten/sui/transactions";
 import { fromHex, normalizeSuiAddress } from "@mysten/sui/utils";
 
 import { SealClient, SessionKey } from "@mysten/seal";
-import { UploadCloud, CheckCircle, Loader2, AlertCircle, FileText, Download, Lock, Unlock, Trash2, Share2, Copy, Search } from "lucide-react";
+import { UploadCloud, CheckCircle, Loader2, AlertCircle, FileText, Download, Lock, Unlock, Trash2, Share2, Copy, Search, QrCode, Link as LinkIcon } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
+import { useSearchParams } from "next/navigation";
 
 /* -------------------------------------------------------------------------- */
 /* SDK INITIALIZATION                                                         */
@@ -28,11 +30,12 @@ const sealClient = new SealClient({
   ],
 });
 
-export default function Home() {
+function HomeContent() {
   // --- Hooks ---
   const account = useCurrentAccount();
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
   const { mutateAsync: signPersonalMessage } = useSignPersonalMessage();
+  const searchParams = useSearchParams();
 
   // --- State ---
   const [file, setFile] = useState<File | null>(null);
@@ -50,6 +53,7 @@ export default function Home() {
   const [accessBlobId, setAccessBlobId] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [remainingTime, setRemainingTime] = useState(0);
+  const [isPublic, setIsPublic] = useState(false);
 
   // Reset helper
   const reset = () => {
@@ -62,6 +66,7 @@ export default function Home() {
     setRecipientAddress("");
     setUploadProgress(0);
     setRemainingTime(0);
+    setIsPublic(false);
   };
 
   // Load user files from backend (files uploaded by user)
@@ -99,6 +104,40 @@ export default function Home() {
     }
   }, [account, showHistory, historyTab]);
 
+  // Handle URL query params for shared files
+  useEffect(() => {
+    const sharedBlobId = searchParams.get("blobId");
+    if (sharedBlobId) {
+      setAccessBlobId(sharedBlobId);
+      // Auto-trigger access if we have a blobId
+      const fetchSharedFile = async () => {
+        try {
+          const response = await fetch(`/api/files?blobId=${sharedBlobId}`);
+          if (response.ok) {
+            const data = await response.json();
+            const fileRecord = data.file;
+            if (fileRecord) {
+              setBlobId(fileRecord.blobId);
+              setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
+              setRecipientAddress(fileRecord.recipientAddress);
+              setIsPublic(!!fileRecord.isPublic);
+              setAccessBlobId("");
+              // Automatically start download/decrypt process
+              // We need to wait a bit for state to update or call a function that takes args
+              // Since handleDownload uses state, we might need to be careful.
+              // Ideally handleDownload should accept args, but for now let's just set state.
+              // The user can click "Download" or we can try to trigger it.
+              // Let's just show the file is ready.
+            }
+          }
+        } catch (e) {
+          console.error("Failed to access shared file from URL", e);
+        }
+      };
+      fetchSharedFile();
+    }
+  }, [searchParams]);
+
   // ----- Delete Handlers -----
   const handleDeleteFile = async (id: string) => {
     if (!confirm("Delete this file?")) return;
@@ -126,34 +165,38 @@ export default function Home() {
   };
 
   // ----- Upload / Encryption Flow -----
-  const onStep1_EncryptAndUpload = async () => {
+  const handleUpload = async () => {
     if (!file || !account) return;
-    if (!recipientAddress) { setError("Please enter a recipient wallet address."); return; }
-    try {
-      setStatus("Encrypting file...");
-      setError("");
+    if (!isPublic && !recipientAddress) { setError("Please enter a recipient wallet address for private files."); return; }
 
-      // Encrypt file data
-      const buffer = new Uint8Array(await file.arrayBuffer());
-      // Normalize recipient address to ensure consistent format
-      const normalizedRecipient = normalizeSuiAddress(recipientAddress);
-      const { encryptedObject } = await sealClient.encrypt({
-        packageId: SEAL_PACKAGE_ID,
-        id: normalizedRecipient,
-        threshold: 1,
-        data: buffer,
-      });
+    try {
+      setError("");
+      let fileToUpload = file;
+
+      if (!isPublic) {
+        setStatus("Encrypting file...");
+        // Encrypt file data
+        const buffer = new Uint8Array(await file.arrayBuffer());
+        // Normalize recipient address to ensure consistent format
+        const normalizedRecipient = normalizeSuiAddress(recipientAddress);
+        const { encryptedObject } = await sealClient.encrypt({
+          packageId: SEAL_PACKAGE_ID,
+          id: normalizedRecipient,
+          threshold: 1,
+          data: buffer,
+        });
+
+        // Create encrypted file for upload
+        fileToUpload = new File([encryptedObject], file.name, {
+          type: file.type || "application/octet-stream"
+        });
+      }
 
       setStatus("Uploading to Walrus...");
 
-      // Create encrypted file for upload
-      const encryptedFile = new File([encryptedObject], file.name, {
-        type: file.type || "application/octet-stream"
-      });
-
       // Upload directly to Walrus HTTP API
       const { uploadToWalrus } = await import('../lib/walrus/client');
-      const newBlobId = await uploadToWalrus(encryptedFile, (progress, timeRemaining) => {
+      const newBlobId = await uploadToWalrus(fileToUpload, (progress, timeRemaining) => {
         setUploadProgress(progress);
         setRemainingTime(timeRemaining);
         if (progress === 100) {
@@ -175,12 +218,13 @@ export default function Home() {
           fileName: file.name,
           fileType: file.type,
           fileSize: file.size,
-          recipientAddress: normalizeSuiAddress(recipientAddress),
+          recipientAddress: isPublic ? "" : normalizeSuiAddress(recipientAddress),
+          isPublic
         }),
       });
 
       setCurrentStep(1);
-      setStatus("Success! Encrypted file stored on Walrus.");
+      setStatus(isPublic ? "Success! Public file stored on Walrus." : "Success! Encrypted file stored on Walrus.");
     } catch (e: any) {
       console.error(e);
       setError(e.message || "Upload failed.");
@@ -194,83 +238,94 @@ export default function Home() {
       setIsDownloading(true);
       setStatus("Fetching file from Walrus...");
 
-      // Download using HTTP API
-      const { downloadFromWalrus } = await import('../lib/walrus/client');
-      const encryptedBlob = await downloadFromWalrus(blobId);
-      const encryptedBytes = new Uint8Array(await encryptedBlob.arrayBuffer());
-
-      // Decrypt the file (assuming it's encrypted)
-      if (!account) throw new Error("Please connect your wallet to decrypt this file.");
-
-      setStatus("Creating session key...");
-      // Normalize address for session key creation
-      const normalizedAccountAddress = normalizeSuiAddress(account.address);
-      const sessionKey = await SessionKey.create({
-        address: normalizedAccountAddress,
-        packageId: SEAL_PACKAGE_ID,
-        ttlMin: 5,
-        suiClient: client,
-      });
-
-      // ✅ CRITICAL: Sign the session key's personal message
-      setStatus("Please sign the personal message in your wallet...");
-      const { signature } = await signPersonalMessage({
-        message: sessionKey.getPersonalMessage(),
-      });
-      sessionKey.setPersonalMessageSignature(signature);
-
-      setStatus("Decrypting file...");
-
-      // Get recipient address - fetch from database if not in state
+      // 1. Fetch metadata to check if public
+      let isFilePublic = isPublic;
       let decryptRecipientAddress = recipientAddress;
+
+      // Try to get metadata from DB if not already known
       if (!decryptRecipientAddress && blobId) {
         try {
           const fileResponse = await fetch(`/api/files?blobId=${blobId}`);
           if (fileResponse.ok) {
-            const fileData = await fileResponse.json();
-            if (fileData.file?.recipientAddress) {
-              decryptRecipientAddress = fileData.file.recipientAddress;
+            const data = await fileResponse.json();
+            if (data.file) {
+              isFilePublic = !!data.file.isPublic;
+              decryptRecipientAddress = data.file.recipientAddress;
             }
           }
         } catch (e) {
-          console.warn("Could not fetch recipient address from database", e);
+          console.warn("Could not fetch file metadata", e);
         }
       }
 
-      // Fallback to current account address if still not found
-      decryptRecipientAddress = decryptRecipientAddress || account.address;
-      if (!decryptRecipientAddress) {
-        throw new Error("Recipient address is required for decryption. Please ensure the file was encrypted for your wallet address.");
+      // Download using HTTP API
+      const { downloadFromWalrus } = await import('../lib/walrus/client');
+      const downloadedBlob = await downloadFromWalrus(blobId);
+
+      let finalBlob = downloadedBlob;
+
+      // If NOT public, decrypt
+      if (!isFilePublic) {
+        // Decrypt the file (assuming it's encrypted)
+        if (!account) throw new Error("Please connect your wallet to decrypt this file.");
+
+        const encryptedBytes = new Uint8Array(await downloadedBlob.arrayBuffer());
+
+        setStatus("Creating session key...");
+        // Normalize address for session key creation
+        const normalizedAccountAddress = normalizeSuiAddress(account.address);
+        const sessionKey = await SessionKey.create({
+          address: normalizedAccountAddress,
+          packageId: SEAL_PACKAGE_ID,
+          ttlMin: 5,
+          suiClient: client,
+        });
+
+        // ✅ CRITICAL: Sign the session key's personal message
+        setStatus("Please sign the personal message in your wallet...");
+        const { signature } = await signPersonalMessage({
+          message: sessionKey.getPersonalMessage(),
+        });
+        sessionKey.setPersonalMessageSignature(signature);
+
+        setStatus("Decrypting file...");
+
+        // Fallback to current account address if still not found
+        decryptRecipientAddress = decryptRecipientAddress || account.address;
+        if (!decryptRecipientAddress) {
+          throw new Error("Recipient address is required for decryption. Please ensure the file was encrypted for your wallet address.");
+        }
+
+        // Normalize addresses for comparison
+        const normalizedAccount = normalizeSuiAddress(account.address);
+        const normalizedRecipient = normalizeSuiAddress(decryptRecipientAddress);
+
+        // ✅ CRITICAL: Verify that the current user is the recipient
+        // The bottled_message access policy only allows the recipient to decrypt
+        if (normalizedAccount !== normalizedRecipient) {
+          throw new Error(`Access denied: This file was encrypted for address ${normalizedRecipient}, but you are connected with ${normalizedAccount}. Only the recipient can decrypt this file.`);
+        }
+
+        const tx = new Transaction();
+        // Set the sender to the recipient address (must match account.address)
+        tx.setSender(normalizedAccount);
+        tx.moveCall({
+          target: `${SEAL_PACKAGE_ID}::${SEAL_MODULE}::seal_approve`,
+          arguments: [tx.pure.vector("u8", fromHex(normalizedRecipient))],
+        });
+
+        // @ts-ignore
+        const txBytes = await tx.build({ client, onlyTransactionKind: true });
+        // @ts-ignore
+        const decryptedBytes = await sealClient.decrypt({ data: encryptedBytes, sessionKey, txBytes });
+
+        const decryptedArray = new Uint8Array(decryptedBytes);
+        finalBlob = new Blob([decryptedArray], { type: file?.type || "application/octet-stream" });
       }
 
-      // Normalize addresses for comparison
-      const normalizedAccount = normalizeSuiAddress(account.address);
-      const normalizedRecipient = normalizeSuiAddress(decryptRecipientAddress);
-
-      // ✅ CRITICAL: Verify that the current user is the recipient
-      // The bottled_message access policy only allows the recipient to decrypt
-      if (normalizedAccount !== normalizedRecipient) {
-        throw new Error(`Access denied: This file was encrypted for address ${normalizedRecipient}, but you are connected with ${normalizedAccount}. Only the recipient can decrypt this file.`);
-      }
-
-      const tx = new Transaction();
-      // Set the sender to the recipient address (must match account.address)
-      tx.setSender(normalizedAccount);
-      tx.moveCall({
-        target: `${SEAL_PACKAGE_ID}::${SEAL_MODULE}::seal_approve`,
-        arguments: [tx.pure.vector("u8", fromHex(normalizedRecipient))],
-      });
-
-      // @ts-ignore
-      const txBytes = await tx.build({ client, onlyTransactionKind: true });
-      // @ts-ignore
-      const decryptedBytes = await sealClient.decrypt({ data: encryptedBytes, sessionKey, txBytes });
-
-      const decryptedArray = new Uint8Array(decryptedBytes);
-      const blob = new Blob([decryptedArray], { type: file?.type || "application/octet-stream" });
       let downloadName = file?.name || `walrus_file_${blobId.slice(0, 6)}`;
 
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(finalBlob);
       const a = document.createElement('a');
       a.href = url;
       a.download = downloadName;
@@ -310,7 +365,7 @@ export default function Home() {
         </div>
 
         {/* Main Content */}
-        {!account ? (
+        {!account && !blobId ? (
           <div className="text-center py-10 bg-slate-50 rounded-xl border-2 border-dashed border-slate-300">
             <div className="mx-auto w-12 h-12 bg-slate-200 rounded-full flex items-center justify-center mb-3">
               <FileText className="text-slate-400" />
@@ -420,7 +475,12 @@ export default function Home() {
                         <div className="flex-1">
                           <p className="font-medium text-sm">{fileRecord.fileName}</p>
                           <p className="text-xs text-slate-500">
-                            To: {fileRecord.recipientAddress.slice(0, 8)}...{fileRecord.recipientAddress.slice(-6)} • {new Date(fileRecord.uploadedAt).toLocaleDateString()}
+                            {fileRecord.isPublic ? (
+                              <span className="text-blue-600 font-semibold">Public File</span>
+                            ) : (
+                              <>To: {fileRecord.recipientAddress.slice(0, 8)}...{fileRecord.recipientAddress.slice(-6)}</>
+                            )}
+                            {' • '}{new Date(fileRecord.uploadedAt).toLocaleDateString()}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -513,28 +573,63 @@ export default function Home() {
               />
             </div>
 
-            {/* Recipient Address */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-700">Recipient Wallet Address</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={recipientAddress}
-                  onChange={(e) => setRecipientAddress(e.target.value)}
-                  disabled={currentStep > 0}
-                  placeholder="0x..."
-                  className="block w-full text-sm border border-slate-200 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500"
-                />
-                <button
-                  onClick={() => setRecipientAddress(account?.address || "")}
-                  className="px-3 py-2 text-xs bg-slate-100 rounded-lg hover:bg-slate-200 whitespace-nowrap"
-                  disabled={currentStep > 0}
-                >
-                  Use My Address
-                </button>
-              </div>
-              <p className="text-xs text-slate-500">Only this address will be able to decrypt the file.</p>
+            {/* Upload Type Toggle */}
+            <div className="bg-slate-100 p-1 rounded-lg flex mb-4">
+              <button
+                onClick={() => setIsPublic(false)}
+                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${!isPublic ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <Lock className="w-4 h-4" />
+                  Private (Encrypted)
+                </div>
+              </button>
+              <button
+                onClick={() => setIsPublic(true)}
+                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${isPublic ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <Share2 className="w-4 h-4" />
+                  Public (Shareable)
+                </div>
+              </button>
             </div>
+
+            {/* Recipient Address (Only for Private) */}
+            {!isPublic && (
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-slate-700">Recipient Wallet Address</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={recipientAddress}
+                    onChange={(e) => setRecipientAddress(e.target.value)}
+                    disabled={currentStep > 0}
+                    placeholder="0x..."
+                    className="block w-full text-sm border border-slate-200 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                  <button
+                    onClick={() => setRecipientAddress(account?.address || "")}
+                    className="px-3 py-2 text-xs bg-slate-100 rounded-lg hover:bg-slate-200 whitespace-nowrap"
+                    disabled={currentStep > 0}
+                  >
+                    Use My Address
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500">Only this address will be able to decrypt the file.</p>
+              </div>
+            )}
+
+            {/* Public Info */}
+            {isPublic && (
+              <div className="bg-blue-50 text-blue-800 p-4 rounded-lg text-sm flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Public File</p>
+                  <p className="mt-1 text-blue-700/80">This file will be stored on Walrus without encryption. Anyone with the Blob ID can access it.</p>
+                </div>
+              </div>
+            )}
 
             {/* Error Banner */}
             {error && (
@@ -548,7 +643,7 @@ export default function Home() {
             {file && !blobId && (
               <div className="space-y-3 pt-2">
                 <button
-                  onClick={onStep1_EncryptAndUpload}
+                  onClick={handleUpload}
                   disabled={currentStep !== 0}
                   className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${currentStep > 0
                     ? "border-emerald-500 bg-emerald-50 text-emerald-700"
@@ -556,7 +651,7 @@ export default function Home() {
                 >
                   <span className="flex items-center gap-3 font-semibold">
                     <UploadCloud className="w-5 h-5" />
-                    Encrypt & Upload to Walrus
+                    {isPublic ? 'Upload Public File' : 'Encrypt & Upload to Walrus'}
                   </span>
                   {status.includes("Uploading") && <Loader2 className="animate-spin w-5 h-5" />}
                   {currentStep > 0 && <CheckCircle className="w-5 h-5" />}
@@ -596,7 +691,7 @@ export default function Home() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-emerald-900">Upload Successful!</h3>
-                  <p className="text-sm text-emerald-700">Your encrypted file has been permanently stored.</p>
+                  <p className="text-sm text-emerald-700">Your {isPublic ? 'public' : 'encrypted'} file has been permanently stored.</p>
                 </div>
                 <div className="bg-white p-3 rounded border border-emerald-200">
                   <div className="flex items-center justify-between gap-2 mb-2">
@@ -625,6 +720,58 @@ export default function Home() {
                   </div>
                   <p className="text-xs font-mono text-slate-500 break-all select-all">{blobId}</p>
                 </div>
+
+                {/* Share Link & QR Code (For Public Files) */}
+                {isPublic && (
+                  <div className="bg-white p-4 rounded border border-emerald-200 space-y-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+                        <LinkIcon className="w-3 h-3" />
+                        Shareable Link:
+                      </p>
+                      <button
+                        onClick={() => {
+                          const link = `${window.location.origin}?blobId=${blobId}`;
+                          navigator.clipboard.writeText(link);
+                          setShareBlobId("link-" + blobId);
+                          setTimeout(() => setShareBlobId(""), 2000);
+                        }}
+                        className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
+                        title="Copy Link"
+                      >
+                        {shareBlobId === "link-" + blobId ? (
+                          <>
+                            <CheckCircle className="w-3 h-3" />
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            Copy Link
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-xs font-mono text-slate-500 break-all select-all bg-slate-50 p-2 rounded border border-slate-100">
+                      {typeof window !== 'undefined' ? `${window.location.origin}?blobId=${blobId}` : `.../?blobId=${blobId}`}
+                    </p>
+
+                    <div className="flex flex-col items-center gap-2 pt-2 border-t border-slate-100">
+                      <p className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+                        <QrCode className="w-3 h-3" />
+                        Scan to Download
+                      </p>
+                      <div className="bg-white p-2 rounded border border-slate-200">
+                        <QRCodeSVG
+                          value={typeof window !== 'undefined' ? `${window.location.origin}?blobId=${blobId}` : blobId}
+                          size={128}
+                          level={"M"}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex gap-3 justify-center pt-2">
                   <button
                     onClick={handleDownload}
@@ -632,7 +779,7 @@ export default function Home() {
                     className="flex items-center gap-2 text-sm font-medium text-white bg-emerald-600 px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-70"
                   >
                     {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                    Decrypt & Download
+                    {isPublic ? 'Download File' : 'Decrypt & Download'}
                   </button>
                   <button
                     onClick={reset}
@@ -653,5 +800,20 @@ export default function Home() {
         )}
       </div>
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+          <p className="text-slate-500 font-medium">Loading Walrus Uploader...</p>
+        </div>
+      </div>
+    }>
+      <HomeContent />
+    </Suspense>
   );
 }

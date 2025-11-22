@@ -1,5 +1,4 @@
 import { createClient, Client } from '@libsql/client';
-import path from 'path';
 
 export interface FileRecord {
   id?: number;
@@ -10,6 +9,7 @@ export interface FileRecord {
   fileSize: number;
   recipientAddress: string;
   uploadedAt: string;
+  isPublic: boolean;
 }
 
 class FileDatabase {
@@ -42,18 +42,24 @@ class FileDatabase {
           fileType TEXT NOT NULL,
           fileSize INTEGER NOT NULL,
           recipientAddress TEXT NOT NULL,
-          uploadedAt TEXT NOT NULL
+          uploadedAt TEXT NOT NULL,
+          isPublic INTEGER DEFAULT 0
         )
       `);
 
-      // Check if recipientAddress column exists
+      // Check if columns exist
       const result = await this.client.execute("PRAGMA table_info(files)");
       const columns = result.rows;
-      const hasRecipientAddress = columns.some(col => col.name === 'recipientAddress');
 
+      const hasRecipientAddress = columns.some(col => col.name === 'recipientAddress');
       if (!hasRecipientAddress) {
         await this.client.execute(`ALTER TABLE files ADD COLUMN recipientAddress TEXT`);
         await this.client.execute(`UPDATE files SET recipientAddress = walletAddress WHERE recipientAddress IS NULL`);
+      }
+
+      const hasIsPublic = columns.some(col => col.name === 'isPublic');
+      if (!hasIsPublic) {
+        await this.client.execute(`ALTER TABLE files ADD COLUMN isPublic INTEGER DEFAULT 0`);
       }
     } catch (e) {
       console.error('Database initialization failed:', e);
@@ -63,8 +69,8 @@ class FileDatabase {
   async saveFile(record: Omit<FileRecord, 'id'>) {
     await this.client.execute({
       sql: `
-        INSERT INTO files (walletAddress, blobId, fileName, fileType, fileSize, recipientAddress, uploadedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO files (walletAddress, blobId, fileName, fileType, fileSize, recipientAddress, uploadedAt, isPublic)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
       args: [
         record.walletAddress,
@@ -73,7 +79,8 @@ class FileDatabase {
         record.fileType,
         record.fileSize,
         record.recipientAddress,
-        record.uploadedAt
+        record.uploadedAt,
+        record.isPublic ? 1 : 0
       ]
     });
   }
@@ -83,7 +90,10 @@ class FileDatabase {
       sql: 'SELECT * FROM files WHERE walletAddress = ? ORDER BY uploadedAt DESC',
       args: [walletAddress]
     });
-    return result.rows as unknown as FileRecord[];
+    return result.rows.map(row => ({
+      ...row,
+      isPublic: Boolean(row.isPublic)
+    })) as unknown as FileRecord[];
   }
 
   async getFilesByRecipient(recipientAddress: string): Promise<FileRecord[]> {
@@ -91,7 +101,10 @@ class FileDatabase {
       sql: 'SELECT * FROM files WHERE recipientAddress = ? ORDER BY uploadedAt DESC',
       args: [recipientAddress]
     });
-    return result.rows as unknown as FileRecord[];
+    return result.rows.map(row => ({
+      ...row,
+      isPublic: Boolean(row.isPublic)
+    })) as unknown as FileRecord[];
   }
 
   async getFileByBlobId(blobId: string): Promise<FileRecord | undefined> {
@@ -99,7 +112,12 @@ class FileDatabase {
       sql: 'SELECT * FROM files WHERE blobId = ?',
       args: [blobId]
     });
-    return result.rows[0] as unknown as FileRecord | undefined;
+    if (result.rows.length === 0) return undefined;
+    const row = result.rows[0];
+    return {
+      ...row,
+      isPublic: Boolean(row.isPublic)
+    } as unknown as FileRecord;
   }
 
   async deleteFile(blobId: string): Promise<boolean> {

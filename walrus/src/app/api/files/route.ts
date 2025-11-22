@@ -4,10 +4,10 @@ import { fileDb, FileRecord } from '../../lib/database';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { walletAddress, blobId, fileName, fileType, fileSize, recipientAddress } = body;
+    const { walletAddress, blobId, fileName, fileType, fileSize, recipientAddress, isPublic } = body;
 
-    if (!recipientAddress) {
-      return NextResponse.json({ error: 'recipientAddress is required' }, { status: 400 });
+    if (!isPublic && !recipientAddress) {
+      return NextResponse.json({ error: 'recipientAddress is required for private files' }, { status: 400 });
     }
 
     const record: Omit<FileRecord, 'id'> = {
@@ -16,13 +16,15 @@ export async function POST(request: NextRequest) {
       fileName,
       fileType,
       fileSize,
-      recipientAddress,
-      uploadedAt: new Date().toISOString()
+      recipientAddress: isPublic ? (recipientAddress || 'PUBLIC') : recipientAddress,
+      uploadedAt: new Date().toISOString(),
+      isPublic: !!isPublic
     };
 
     await fileDb.saveFile(record);
     return NextResponse.json({ success: true });
   } catch (error) {
+    console.error('Failed to save file record:', error);
     return NextResponse.json({ error: 'Failed to save file record' }, { status: 500 });
   }
 }
@@ -57,6 +59,7 @@ export async function GET(request: NextRequest) {
     const files = await fileDb.getFilesByWallet(walletAddress);
     return NextResponse.json({ files });
   } catch (error) {
+    console.error('Failed to fetch files:', error);
     return NextResponse.json({ error: 'Failed to fetch files' }, { status: 500 });
   }
 }
@@ -83,6 +86,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'blobId or wallet (with deleteAll) required' }, { status: 400 });
     }
   } catch (error) {
+    console.error('Failed to delete file(s):', error);
     return NextResponse.json({ error: 'Failed to delete file(s)' }, { status: 500 });
   }
 }
