@@ -8,7 +8,7 @@ import { Message } from '../types';
 const ChatWidget: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
-    { id: '0', role: 'model', text: 'Hello. I am the Eco AI assistant. How can I help you understand our liquidity network?', timestamp: Date.now() }
+    { id: '0', role: 'model', text: 'Hello. I am the DeTransfer AI assistant. I can help you with secure file transfers, Walrus storage, and Seal encryption. How can I assist you?', timestamp: Date.now() }
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -36,9 +36,8 @@ const ChatWidget: React.FC = () => {
     setInputValue('');
     setIsLoading(true);
 
-    // Convert internal state to format expected by API
     const history = messages.map(m => ({ role: m.role, text: m.text }));
-    
+
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -83,6 +82,29 @@ const ChatWidget: React.FC = () => {
     }
   };
 
+  // Convert URLs in text to clickable links
+  const renderMessageWithLinks = (text: string) => {
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
+
+    return parts.map((part, index) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={index}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-400 hover:text-blue-300 underline break-all"
+          >
+            {part}
+          </a>
+        );
+      }
+      return <span key={index}>{part}</span>;
+    });
+  };
+
   return (
     <>
       <AnimatePresence>
@@ -96,8 +118,8 @@ const ChatWidget: React.FC = () => {
             {/* Header */}
             <div className="bg-eco-accent p-4 flex justify-between items-center">
               <div className="flex items-center gap-2">
-                 <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-                 <span className="text-white font-medium text-sm">Eco Intelligence</span>
+                <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+                <span className="text-white font-medium text-sm">DeTransfer AI</span>
               </div>
               <button onClick={() => setIsOpen(false)} className="text-white/80 hover:text-white">
                 <X size={18} />
@@ -112,23 +134,22 @@ const ChatWidget: React.FC = () => {
                   className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed ${
-                      msg.role === 'user'
+                    className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed ${msg.role === 'user'
                         ? 'bg-white text-black rounded-br-none'
                         : 'bg-white/10 text-gray-200 rounded-bl-none'
-                    }`}
+                      }`}
                   >
-                    {msg.text}
+                    {renderMessageWithLinks(msg.text)}
                   </div>
                 </div>
               ))}
               {isLoading && (
-                 <div className="flex justify-start">
-                    <div className="bg-white/10 text-gray-200 p-3 rounded-2xl rounded-bl-none flex items-center gap-2">
-                      <Loader2 size={14} className="animate-spin" />
-                      <span className="text-xs">Thinking...</span>
-                    </div>
-                 </div>
+                <div className="flex justify-start">
+                  <div className="bg-white/10 text-gray-200 p-3 rounded-2xl rounded-bl-none flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin" />
+                    <span className="text-xs">Thinking...</span>
+                  </div>
+                </div>
               )}
               <div ref={messagesEndRef} />
             </div>
@@ -141,7 +162,7 @@ const ChatWidget: React.FC = () => {
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={handleKeyPress}
-                  placeholder="Ask about Eco..."
+                  placeholder="Ask about DeTransfer..."
                   className="w-full bg-black/40 border border-white/10 rounded-full pl-4 pr-10 py-2.5 text-sm text-white focus:outline-none focus:border-eco-accent/50"
                 />
                 <button
@@ -151,9 +172,6 @@ const ChatWidget: React.FC = () => {
                 >
                   <Send size={14} />
                 </button>
-              </div>
-              <div className="mt-2 text-center">
-                 <span className="text-[10px] text-gray-600">Powered by Gemini 2.5 Flash</span>
               </div>
             </div>
           </motion.div>
