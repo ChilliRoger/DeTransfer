@@ -3,10 +3,12 @@
 import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui/client";
-import { motion } from "framer-motion";
-import { Download, FileText, AlertCircle, Loader2, CheckCircle, Clock, HardDrive, User, Copy, CheckCircle2, Link as LinkIcon } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Download, FileText, AlertCircle, Loader2, CheckCircle, Clock, HardDrive, User, Copy, CheckCircle2, Link as LinkIcon, Eye, EyeOff, X } from "lucide-react";
 import { getFileByBlobId } from "../lib/sui";
 import { downloadFromWalrus } from "../lib/walrus/client";
+import { useCurrentAccount, useSignPersonalMessage } from "@mysten/dapp-kit";
+import { normalizeSuiAddress } from "@mysten/sui/utils";
 
 const client = new SuiClient({
   url: getFullnodeUrl("testnet"),
@@ -26,6 +28,9 @@ interface FileMetadata {
 
 function DownloadContent() {
   const searchParams = useSearchParams();
+  const account = useCurrentAccount();
+  const { mutateAsync: signPersonalMessage } = useSignPersonalMessage();
+
   const [files, setFiles] = useState<FileMetadata[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -33,6 +38,13 @@ function DownloadContent() {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [currentEpoch, setCurrentEpoch] = useState<number>(0);
   const [copiedId, setCopiedId] = useState<string>("");
+
+  // Preview State
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+  const [previewType, setPreviewType] = useState<string>("");
+  const [previewContent, setPreviewContent] = useState<string>(""); // For text files
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
 
   // Fetch current epoch on mount
   useEffect(() => {
@@ -70,11 +82,7 @@ function DownloadContent() {
           const fileRecord = await getFileByBlobId(client, id.trim());
           if (fileRecord) {
             // Only allow public files to be downloaded without wallet
-            if (!fileRecord.isPublic) {
-              setError("This file is encrypted and requires wallet authentication. Please use the upload page to access it.");
-              setLoading(false);
-              return;
-            }
+            // BUT: If user is connected, we can show private files too (logic handled in fetch)
 
             fileMetadata.push({
               blobId: fileRecord.blobId,
@@ -117,9 +125,9 @@ function DownloadContent() {
   const getExpirationText = (expiresAt: number) => {
     if (!expiresAt || expiresAt === 0) return "No expiration";
     if (!currentEpoch) return "Loading...";
-    
+
     if (isExpired(expiresAt)) return "Expired";
-    
+
     const remainingEpochs = expiresAt - currentEpoch;
     if (remainingEpochs === 1) return "Expires in 1 day";
     return `Expires in ${remainingEpochs} days`;
@@ -132,6 +140,47 @@ function DownloadContent() {
     const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+  };
+
+  // Core function to fetch and decrypt file content
+  const fetchFileContent = async (file: FileMetadata, onProgress?: (progress: number) => void): Promise<Blob> => {
+    // 1. Download from Walrus
+    const downloadedBlob = await downloadFromWalrus(file.blobId, onProgress);
+
+    // 2. If public, return directly
+    if (file.isPublic) {
+      return downloadedBlob;
+    }
+
+    // 3. If private, decrypt
+    if (!account) throw new Error("Please connect your wallet to decrypt this file.");
+
+    const encryptedBytes = new Uint8Array(await downloadedBlob.arrayBuffer());
+
+    // Normalize addresses
+    const normalizedAccount = normalizeSuiAddress(account.address);
+    const normalizedRecipient = normalizeSuiAddress(file.recipient || account.address); // Fallback if missing
+
+    if (normalizedAccount !== normalizedRecipient) {
+      throw new Error("Access is restricted. This is a privately shared file.");
+    }
+
+    // Use modular decryption
+    const { decryptFile } = await import('../lib/seal/decryption');
+
+    const decryptedBytes = await decryptFile({
+      encryptedData: encryptedBytes,
+      userAddress: account.address,
+      recipientAddress: file.recipient || account.address,
+      signatureCallback: async (message: Uint8Array) => {
+        // We might need a way to signal UI status here if needed
+        const { signature } = await signPersonalMessage({ message });
+        return signature;
+      }
+    });
+
+    // @ts-ignore - Suppress ArrayBuffer/SharedArrayBuffer mismatch
+    return new Blob([decryptedBytes], { type: file.fileType });
   };
 
   // Handle download
@@ -147,7 +196,7 @@ function DownloadContent() {
       setError("");
       setDownloadProgress(prev => ({ ...prev, [file.blobId]: 0 }));
 
-      const blob = await downloadFromWalrus(file.blobId, (progress) => {
+      const blob = await fetchFileContent(file, (progress) => {
         setDownloadProgress(prev => ({ ...prev, [file.blobId]: progress }));
       });
 
@@ -176,6 +225,80 @@ function DownloadContent() {
     }
   };
 
+  // Helper to get MIME type from filename
+  const getMimeType = (fileName: string, currentType: string) => {
+    if (currentType && currentType !== "application/octet-stream") return currentType;
+
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    if (!ext) return currentType;
+
+    const mimeMap: Record<string, string> = {
+      'mp4': 'video/mp4',
+      'webm': 'video/webm',
+      'ogg': 'video/ogg',
+      'mov': 'video/quicktime',
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      'pdf': 'application/pdf',
+      'txt': 'text/plain',
+      'json': 'application/json',
+      'md': 'text/markdown'
+    };
+
+    return mimeMap[ext] || currentType;
+  };
+
+  // Handle Preview
+  const handlePreview = async (file: FileMetadata) => {
+    if (activePreviewId === file.blobId) {
+      // Close preview
+      setActivePreviewId(null);
+      setPreviewBlobUrl(null);
+      return;
+    }
+
+    if (isExpired(file.expiresAt)) {
+      setError("Cannot preview: This file has expired.");
+      return;
+    }
+
+    try {
+      setIsPreviewLoading(true);
+      setActivePreviewId(file.blobId);
+      setError("");
+
+      const blob = await fetchFileContent(file, (progress) => {
+        // Optional: show progress for preview loading too
+      });
+
+      const url = URL.createObjectURL(blob);
+      setPreviewBlobUrl(url);
+
+      // Determine best MIME type
+      const bestType = getMimeType(file.fileName, file.fileType);
+      console.log("Previewing file:", file.fileName, "Type:", bestType);
+      setPreviewType(bestType);
+
+      // If text, read content
+      if (bestType.startsWith('text/') || bestType === 'application/json') {
+        const text = await blob.text();
+        setPreviewContent(text.slice(0, 10000)); // Limit preview size
+      }
+
+    } catch (e: any) {
+      console.error("Preview failed", e);
+      setError("Preview failed: " + (e.message || "Unknown error"));
+      setActivePreviewId(null);
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  };
+
   // Copy blob ID
   const copyBlobId = (blobId: string) => {
     navigator.clipboard.writeText(blobId);
@@ -183,14 +306,63 @@ function DownloadContent() {
     setTimeout(() => setCopiedId(""), 2000);
   };
 
+  // Render Preview Content
+  const renderPreview = () => {
+    if (!previewBlobUrl) return null;
+
+    if (previewType.startsWith('image/')) {
+      return (
+        <div className="rounded-xl overflow-hidden border border-white/10 bg-black/50 flex justify-center">
+          <img src={previewBlobUrl} alt="Preview" className="max-h-[500px] object-contain" />
+        </div>
+      );
+    }
+    if (previewType.startsWith('video/')) {
+      return (
+        <div className="rounded-xl overflow-hidden border border-white/10 bg-black/50">
+          <video src={previewBlobUrl} controls className="w-full max-h-[500px]" />
+        </div>
+      );
+    }
+    if (previewType.startsWith('audio/')) {
+      return (
+        <div className="rounded-xl overflow-hidden border border-white/10 bg-black/50 p-6 flex justify-center">
+          <audio src={previewBlobUrl} controls className="w-full" />
+        </div>
+      );
+    }
+    if (previewType === 'application/pdf') {
+      return (
+        <div className="rounded-xl overflow-hidden border border-white/10 bg-white h-[600px]">
+          <iframe src={previewBlobUrl} className="w-full h-full" title="PDF Preview" />
+        </div>
+      );
+    }
+    if (previewType.startsWith('text/') || previewType === 'application/json') {
+      return (
+        <div className="rounded-xl overflow-hidden border border-white/10 bg-[#1a1a1a] p-4 max-h-[400px] overflow-y-auto">
+          <pre className="text-sm font-mono text-gray-300 whitespace-pre-wrap break-words">
+            {previewContent}
+          </pre>
+        </div>
+      );
+    }
+
+    return (
+      <div className="p-8 text-center text-gray-400 bg-white/5 rounded-xl border border-white/10">
+        <p>Preview not available for this file type.</p>
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <main className="min-h-screen flex flex-col items-center justify-center pt-32 pb-32 px-4 md:px-6 relative overflow-hidden bg-[#050505]">
         <div className="absolute inset-0 pointer-events-none">
-          <motion.div 
+          <motion.div
             className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] md:w-[900px] md:h-[900px]"
           >
-            <motion.div 
+            <motion.div
               className="absolute inset-0"
               animate={{
                 rotate: 360,
@@ -218,10 +390,10 @@ function DownloadContent() {
     return (
       <main className="min-h-screen flex flex-col items-center justify-center pt-32 pb-32 px-4 md:px-6 relative overflow-hidden bg-[#050505]">
         <div className="absolute inset-0 pointer-events-none">
-          <motion.div 
+          <motion.div
             className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] md:w-[900px] md:h-[900px]"
           >
-            <motion.div 
+            <motion.div
               className="absolute inset-0"
               animate={{
                 rotate: 360,
@@ -259,10 +431,10 @@ function DownloadContent() {
     <main className="min-h-screen flex flex-col items-center justify-center pt-32 pb-32 px-4 md:px-6 relative overflow-hidden bg-[#050505]">
       {/* Background Animation */}
       <div className="absolute inset-0 pointer-events-none">
-        <motion.div 
+        <motion.div
           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] md:w-[900px] md:h-[900px]"
         >
-          <motion.div 
+          <motion.div
             className="absolute inset-0"
             animate={{
               rotate: 360,
@@ -280,7 +452,7 @@ function DownloadContent() {
 
       <div className="relative z-10 w-full max-w-4xl">
         {/* Header */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8 }}
@@ -312,6 +484,7 @@ function DownloadContent() {
             const expired = isExpired(file.expiresAt);
             const downloading = downloadingIds.has(file.blobId);
             const progress = downloadProgress[file.blobId] || 0;
+            const isPreviewActive = activePreviewId === file.blobId;
 
             return (
               <motion.div
@@ -322,18 +495,18 @@ function DownloadContent() {
                 className="bg-[#0A0A0A]/80 backdrop-blur-xl border border-white/10 rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden"
               >
                 <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-50" />
-                
+
                 {/* File Info */}
                 <div className="flex items-start gap-4 mb-6">
                   <div className="w-12 h-12 bg-eco-accent/20 rounded-xl flex items-center justify-center flex-shrink-0">
                     <FileText className="w-6 h-6 text-eco-accent" />
                   </div>
-                  
+
                   <div className="flex-1 min-w-0">
                     <h3 className="text-xl font-bold text-white mb-2 truncate">
                       {file.fileName}
                     </h3>
-                    
+
                     <div className="flex flex-wrap gap-4 text-sm text-gray-400 font-mono">
                       <div className="flex items-center gap-2">
                         <HardDrive className="w-4 h-4" />
@@ -381,6 +554,37 @@ function DownloadContent() {
                   </p>
                 </div>
 
+                {/* Preview Section */}
+                <AnimatePresence>
+                  {isPreviewActive && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="mb-6"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-semibold text-white">File Preview</h4>
+                        <button
+                          onClick={() => handlePreview(file)}
+                          className="text-gray-400 hover:text-white"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {isPreviewLoading ? (
+                        <div className="h-48 flex flex-col items-center justify-center bg-white/5 rounded-xl border border-white/10">
+                          <Loader2 className="w-8 h-8 text-eco-accent animate-spin mb-2" />
+                          <p className="text-sm text-gray-400">Loading preview...</p>
+                        </div>
+                      ) : (
+                        renderPreview()
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
                 {/* Download Progress */}
                 {downloading && progress > 0 && progress < 100 && (
                   <div className="mb-4">
@@ -399,40 +603,59 @@ function DownloadContent() {
                   </div>
                 )}
 
-                {/* Download Button */}
-                <button
-                  onClick={() => handleDownload(file)}
-                  disabled={downloading || expired}
-                  className={`w-full py-4 px-6 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2 ${
-                    expired
+                {/* Action Buttons */}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handlePreview(file)}
+                    disabled={downloading || expired}
+                    className="flex-1 py-4 px-6 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 border border-white/10"
+                  >
+                    {isPreviewActive ? (
+                      <>
+                        <EyeOff className="w-5 h-5" />
+                        <span>Hide Preview</span>
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="w-5 h-5" />
+                        <span>Preview File</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => handleDownload(file)}
+                    disabled={downloading || expired}
+                    className={`flex-[2] py-4 px-6 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2 ${expired
                       ? "bg-gray-800/50 text-gray-500 cursor-not-allowed"
                       : downloading
-                      ? "bg-eco-accent/50 cursor-wait"
-                      : "bg-eco-accent hover:bg-eco-accent/90 shadow-lg shadow-eco-accent/20"
-                  }`}
-                >
-                  {downloading ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>Downloading...</span>
-                    </>
-                  ) : expired ? (
-                    <>
-                      <AlertCircle className="w-5 h-5" />
-                      <span>File Expired</span>
-                    </>
-                  ) : progress === 100 ? (
-                    <>
-                      <CheckCircle className="w-5 h-5" />
-                      <span>Download Complete</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-5 h-5" />
-                      <span>Download File</span>
-                    </>
-                  )}
-                </button>
+                        ? "bg-eco-accent/50 cursor-wait"
+                        : "bg-eco-accent hover:bg-eco-accent/90 shadow-lg shadow-eco-accent/20"
+                      }`}
+                  >
+                    {downloading ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span>Downloading...</span>
+                      </>
+                    ) : expired ? (
+                      <>
+                        <AlertCircle className="w-5 h-5" />
+                        <span>File Expired</span>
+                      </>
+                    ) : progress === 100 ? (
+                      <>
+                        <CheckCircle className="w-5 h-5" />
+                        <span>Download Complete</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-5 h-5" />
+                        <span>Download File</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </motion.div>
             );
           })}
