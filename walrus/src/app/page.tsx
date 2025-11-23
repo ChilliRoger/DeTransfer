@@ -7,9 +7,15 @@ import { Transaction } from "@mysten/sui/transactions";
 import { fromHex, normalizeSuiAddress } from "@mysten/sui/utils";
 
 import { SealClient, SessionKey } from "@mysten/seal";
-import { UploadCloud, CheckCircle, Loader2, AlertCircle, FileText, Download, Lock, Unlock, Trash2, Share2, Copy, Search, QrCode, Link as LinkIcon } from "lucide-react";
+import { UploadCloud, CheckCircle, Loader2, AlertCircle, FileText, Download, Lock, Trash2, Share2, Copy, Search, QrCode, Link as LinkIcon } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useSearchParams } from "next/navigation";
+import {
+  createRegisterFileTransaction,
+  getFilesByUploaderViaEvents,
+  getFilesByRecipient,
+  getFileByBlobId,
+} from "../lib/sui";
 
 /* -------------------------------------------------------------------------- */
 /* SDK INITIALIZATION                                                         */
@@ -69,28 +75,26 @@ function HomeContent() {
     setIsPublic(false);
   };
 
-  // Load user files from backend (files uploaded by user)
+  // Load user files from blockchain (files uploaded by user)
   const loadUserFiles = async () => {
     if (!account) return;
     try {
-      const response = await fetch(`/api/files?wallet=${account.address}`);
-      const data = await response.json();
-      setUserFiles(data.files || []);
+      const files = await getFilesByUploaderViaEvents(client, account.address);
+      setUserFiles(files);
     } catch (e) {
-      console.error("Failed to load files", e);
+      console.error("Failed to load files from blockchain", e);
     }
   };
 
-  // Load shared files (files shared with user as recipient)
+  // Load shared files from blockchain (files shared with user as recipient)
   const loadSharedFiles = async () => {
     if (!account) return;
     try {
       const normalizedAddress = normalizeSuiAddress(account.address);
-      const response = await fetch(`/api/files?recipient=${normalizedAddress}`);
-      const data = await response.json();
-      setSharedFiles(data.files || []);
+      const files = await getFilesByRecipient(client, normalizedAddress);
+      setSharedFiles(files);
     } catch (e) {
-      console.error("Failed to load shared files", e);
+      console.error("Failed to load shared files from blockchain", e);
     }
   };
 
@@ -112,17 +116,13 @@ function HomeContent() {
       // Auto-trigger access if we have a blobId
       const fetchSharedFile = async () => {
         try {
-          const response = await fetch(`/api/files?blobId=${sharedBlobId}`);
-          if (response.ok) {
-            const data = await response.json();
-            const fileRecord = data.file;
-            if (fileRecord) {
-              setBlobId(fileRecord.blobId);
-              setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
-              setRecipientAddress(fileRecord.recipientAddress);
-              setIsPublic(!!fileRecord.isPublic);
-              setAccessBlobId("");
-            }
+          const fileRecord = await getFileByBlobId(client, sharedBlobId);
+          if (fileRecord) {
+            setBlobId(fileRecord.blobId);
+            setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
+            setRecipientAddress(fileRecord.recipient);
+            setIsPublic(fileRecord.isPublic);
+            setAccessBlobId("");
           }
         } catch (e) {
           console.error("Failed to access shared file from URL", e);
@@ -132,30 +132,18 @@ function HomeContent() {
     }
   }, [searchParams]);
 
-  // ----- Delete Handlers -----
+  // ----- Delete Handlers (Removed for On-Chain) -----
   const handleDeleteFile = async (id: string) => {
     if (!confirm("Delete this file?")) return;
-    try {
-      const res = await fetch(`/api/files?blobId=${id}`, { method: "DELETE" });
-      if (res.ok) await loadUserFiles();
-      else setError("Failed to delete file");
-    } catch (e) {
-      console.error(e);
-      setError("Failed to delete file");
-    }
+    // On-chain deletion requires object ownership and gas. 
+    // For Phase 1, we'll just remove it from the local view or show a message.
+    alert("File deletion from blockchain is not yet supported in the UI.");
   };
 
   const handleClearAllFiles = async () => {
     if (!account) return;
     if (!confirm("Clear all files for this wallet?")) return;
-    try {
-      const res = await fetch(`/api/files?wallet=${account.address}&deleteAll=true`, { method: "DELETE" });
-      if (res.ok) await loadUserFiles();
-      else setError("Failed to clear files");
-    } catch (e) {
-      console.error(e);
-      setError("Failed to clear files");
-    }
+    alert("Clearing all files from blockchain is not yet supported in the UI.");
   };
 
   // ----- Upload / Encryption Flow -----
@@ -204,23 +192,20 @@ function HomeContent() {
 
       setBlobId(newBlobId);
 
-      // Save to database
-      await fetch('/api/files', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          walletAddress: account.address,
-          blobId: newBlobId,
-          fileName: file.name,
-          fileType: file.type,
-          fileSize: file.size,
-          recipientAddress: isPublic ? "" : normalizeSuiAddress(recipientAddress),
-          isPublic
-        }),
-      });
+      // Save metadata on blockchain
+      setStatus("Storing metadata on blockchain...");
+      const tx = createRegisterFileTransaction(
+        newBlobId,
+        isPublic ? account.address : normalizeSuiAddress(recipientAddress),
+        file.name,
+        file.type,
+        file.size,
+        isPublic
+      );
+      await signAndExecute({ transaction: tx });
 
       setCurrentStep(1);
-      setStatus(isPublic ? "Success! Public file stored on Walrus." : "Success! Encrypted file stored on Walrus.");
+      setStatus(isPublic ? "Success! Public file stored on Walrus & Blockchain." : "Success! Encrypted file stored on Walrus & Blockchain.");
     } catch (e: any) {
       console.error(e);
       setError(e.message || "Upload failed.");
@@ -238,16 +223,13 @@ function HomeContent() {
       let isFilePublic = isPublic;
       let decryptRecipientAddress = recipientAddress;
 
-      // Try to get metadata from DB if not already known
+      // Try to get metadata from Blockchain if not already known
       if (!decryptRecipientAddress && blobId) {
         try {
-          const fileResponse = await fetch(`/api/files?blobId=${blobId}`);
-          if (fileResponse.ok) {
-            const data = await fileResponse.json();
-            if (data.file) {
-              isFilePublic = !!data.file.isPublic;
-              decryptRecipientAddress = data.file.recipientAddress;
-            }
+          const fileRecord = await getFileByBlobId(client, blobId);
+          if (fileRecord) {
+            isFilePublic = fileRecord.isPublic;
+            decryptRecipientAddress = fileRecord.recipient;
           }
         } catch (e) {
           console.warn("Could not fetch file metadata", e);
@@ -299,7 +281,7 @@ function HomeContent() {
         // ✅ CRITICAL: Verify that the current user is the recipient
         // The bottled_message access policy only allows the recipient to decrypt
         if (normalizedAccount !== normalizedRecipient) {
-          throw new Error(`Access denied: This file was encrypted for address ${normalizedRecipient}, but you are connected with ${normalizedAccount}. Only the recipient can decrypt this file.`);
+          throw new Error("Access is restricted. This is a privately shared file.");
         }
 
         const tx = new Transaction();
@@ -419,19 +401,13 @@ function HomeContent() {
                   onClick={async () => {
                     if (!accessBlobId) return;
                     try {
-                      const response = await fetch(`/api/files?blobId=${accessBlobId}`);
-                      if (response.ok) {
-                        const data = await response.json();
-                        const fileRecord = data.file;
-                        if (fileRecord) {
-                          setBlobId(fileRecord.blobId);
-                          setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
-                          setRecipientAddress(fileRecord.recipientAddress);
-                          setAccessBlobId("");
-                          await handleDownload();
-                        } else {
-                          setError("File not found");
-                        }
+                      const fileRecord = await getFileByBlobId(client, accessBlobId);
+                      if (fileRecord) {
+                        setBlobId(fileRecord.blobId);
+                        setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
+                        setRecipientAddress(fileRecord.recipient);
+                        setAccessBlobId("");
+                        await handleDownload();
                       } else {
                         setError("File not found");
                       }
@@ -474,9 +450,9 @@ function HomeContent() {
                             {fileRecord.isPublic ? (
                               <span className="text-blue-600 font-semibold">Public File</span>
                             ) : (
-                              <>To: {fileRecord.recipientAddress.slice(0, 8)}...{fileRecord.recipientAddress.slice(-6)}</>
+                              <>To: {fileRecord.recipient.slice(0, 8)}...{fileRecord.recipient.slice(-6)}</>
                             )}
-                            {' • '}{new Date(fileRecord.uploadedAt).toLocaleDateString()}
+                            {' • '}{new Date(Number(fileRecord.uploadedAt)).toLocaleDateString()}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -499,7 +475,7 @@ function HomeContent() {
                             onClick={() => {
                               setBlobId(fileRecord.blobId);
                               setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
-                              setRecipientAddress(fileRecord.recipientAddress || account?.address || "");
+                              setRecipientAddress(fileRecord.recipient || account?.address || "");
                               handleDownload();
                             }}
                             className="text-xs px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
@@ -533,7 +509,7 @@ function HomeContent() {
                         <div className="flex-1">
                           <p className="font-medium text-sm">{fileRecord.fileName}</p>
                           <p className="text-xs text-slate-500">
-                            From: {fileRecord.walletAddress.slice(0, 8)}...{fileRecord.walletAddress.slice(-6)} • {new Date(fileRecord.uploadedAt).toLocaleDateString()}
+                            From: {fileRecord.sender.slice(0, 8)}...{fileRecord.sender.slice(-6)} • {new Date(Number(fileRecord.uploadedAt)).toLocaleDateString()}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -541,7 +517,7 @@ function HomeContent() {
                             onClick={() => {
                               setBlobId(fileRecord.blobId);
                               setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
-                              setRecipientAddress(fileRecord.recipientAddress);
+                              setRecipientAddress(fileRecord.recipient);
                               handleDownload();
                             }}
                             className="text-xs px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
@@ -799,7 +775,7 @@ function HomeContent() {
   );
 }
 
-export default function Home() {
+export default function WalrusPage() {
   return (
     <Suspense fallback={
       <div className="flex min-h-screen items-center justify-center">
@@ -809,4 +785,4 @@ export default function Home() {
       <HomeContent />
     </Suspense>
   );
-}
+} 
