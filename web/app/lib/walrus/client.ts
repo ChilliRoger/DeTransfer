@@ -8,6 +8,7 @@ const WALRUS_AGGREGATOR = 'https://aggregator.walrus-testnet.walrus.space';
 
 export async function uploadToWalrus(
   file: File,
+  epochs: number = 1, // Default to 1 epoch (1 day on testnet)
   onProgress?: (progress: number, timeRemaining: number) => void
 ): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -28,7 +29,8 @@ export async function uploadToWalrus(
       }
     };
 
-    xhr.open('PUT', `${WALRUS_PUBLISHER}/v1/blobs`);
+    // Pass epochs parameter to Walrus
+    xhr.open('PUT', `${WALRUS_PUBLISHER}/v1/blobs?epochs=${epochs}`);
 
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {

@@ -42,7 +42,8 @@ function UploadContent() {
   const searchParams = useSearchParams();
 
   // --- State ---
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]); // 🆕 Support multiple files
+  const [uploadedBatch, setUploadedBatch] = useState<{ blobId: string, name: string, type: string, size: number }[]>([]); // Track batch uploads
   const [recipientAddress, setRecipientAddress] = useState("");
   const [status, setStatus] = useState("Idle");
   const [blobId, setBlobId] = useState("");
@@ -57,10 +58,71 @@ function UploadContent() {
   const [remainingTime, setRemainingTime] = useState(0);
   const [isPublic, setIsPublic] = useState(false);
   const [autoDownloadBlobId, setAutoDownloadBlobId] = useState<string | null>(null);
+  const [isExpired, setIsExpired] = useState(false);
+  const [storageEpochs, setStorageEpochs] = useState(1);
+  const [durationValue, setDurationValue] = useState(1);
+  const [durationUnit, setDurationUnit] = useState("days");
+  const [currentEpoch, setCurrentEpoch] = useState<number>(0);
+
+  // Fetch current epoch on mount
+  useEffect(() => {
+    const fetchEpoch = async () => {
+      try {
+        const state = await client.getLatestSuiSystemState();
+        setCurrentEpoch(Number(state.epoch));
+      } catch (e) {
+        console.error("Failed to fetch current epoch", e);
+      }
+    };
+    fetchEpoch();
+  }, []);
+
+  // Helper to convert epoch to date (approximate)
+  const getEpochDate = (epoch: number) => {
+    if (!epoch || !currentEpoch) return new Date(); // Fallback to now
+    // Calculate difference in epochs
+    const diff = epoch - currentEpoch;
+    // Add difference in days (assuming 1 epoch = 1 day on testnet)
+    const date = new Date();
+    date.setDate(date.getDate() + diff);
+    return date;
+  };
+
+  // Helper to format expiration time
+  const getExpirationText = (expiresAt: number) => {
+    if (!expiresAt || expiresAt === 0) return null;
+    if (!currentEpoch) return "Loading expiration...";
+
+    const remainingEpochs = expiresAt - currentEpoch;
+    if (remainingEpochs <= 0) return "Expired";
+
+    // Testnet: 1 Epoch = 1 Day
+    // Mainnet: 1 Epoch = 14 Days (approx)
+    // We assume Testnet for now as per config
+    const daysRemaining = remainingEpochs;
+
+    if (daysRemaining === 1) return "Expires in 1 day";
+    return `Expires in ${daysRemaining} days`;
+  };
+
+  // Calculate epochs when duration changes
+  useEffect(() => {
+    let epochs = 1;
+    const val = Math.max(1, Math.floor(durationValue)); // Ensure positive integer
+
+    switch (durationUnit) {
+      case "days": epochs = val; break;
+      case "weeks": epochs = val * 7; break;
+      case "months": epochs = val * 30; break;
+      case "years": epochs = val * 365; break;
+    }
+    setStorageEpochs(epochs);
+  }, [durationValue, durationUnit]);
 
   // Reset helper
   const reset = () => {
-    setFile(null);
+    setFiles([]);
+    setUploadedBatch([]);
     setBlobId("");
     setStatus("Idle");
     setCurrentStep(0);
@@ -70,6 +132,9 @@ function UploadContent() {
     setUploadProgress(0);
     setRemainingTime(0);
     setIsPublic(false);
+    setIsExpired(false);
+    setDurationValue(1);
+    setDurationUnit("days");
   };
 
   // Load user files from backend (files uploaded by user)
@@ -92,14 +157,51 @@ function UploadContent() {
   // Handle URL query params for shared files
   useEffect(() => {
     const sharedBlobId = searchParams.get("blobId");
-    if (sharedBlobId) {
+    const sharedBlobIds = searchParams.get("blobIds");
+
+    // Handle batch link (multiple files)
+    if (sharedBlobIds) {
+      const blobIdArray = sharedBlobIds.split(',').filter(id => id.trim());
+      const fetchBatchFiles = async () => {
+        try {
+          const batchMetadata: { blobId: string, name: string, type: string, size: number }[] = [];
+
+          for (const blobId of blobIdArray) {
+            const fileRecord = await getFileByBlobId(client, blobId.trim());
+            if (fileRecord) {
+              batchMetadata.push({
+                blobId: fileRecord.blobId,
+                name: fileRecord.fileName,
+                type: fileRecord.fileType,
+                size: fileRecord.fileSize
+              });
+
+              // Set public flag based on first file (all should be same in a batch)
+              if (batchMetadata.length === 1) {
+                setIsPublic(fileRecord.isPublic);
+              }
+            }
+          }
+
+          if (batchMetadata.length > 0) {
+            setUploadedBatch(batchMetadata);
+            setBlobId(batchMetadata[0].blobId); // Set first for backward compatibility
+          }
+        } catch (e) {
+          console.error("Failed to fetch batch files from URL", e);
+        }
+      };
+      fetchBatchFiles();
+    }
+    // Handle single file link
+    else if (sharedBlobId) {
       // Auto-trigger access if we have a blobId
       const fetchSharedFile = async () => {
         try {
           const fileRecord = await getFileByBlobId(client, sharedBlobId);
           if (fileRecord) {
             setBlobId(fileRecord.blobId);
-            setFile({ name: fileRecord.fileName, type: fileRecord.fileType || "application/octet-stream" } as File);
+            setFiles([{ name: fileRecord.fileName, type: fileRecord.fileType || "application/octet-stream" } as File]);
             setRecipientAddress(fileRecord.recipient);
             const isFilePublic = !!fileRecord.isPublic;
             setIsPublic(isFilePublic);
@@ -123,73 +225,113 @@ function UploadContent() {
 
   // ----- Upload / Encryption Flow -----
   const handleUpload = async () => {
-    if (!file || !account) return;
+    if (files.length === 0 || !account) return;
     if (!isPublic && !recipientAddress) { setError("Please enter a recipient wallet address for private files."); return; }
 
     try {
       setError("");
-      let fileToUpload = file;
+      setStatus("Starting batch upload...");
 
-      if (!isPublic) {
-        setStatus("Encrypting file...");
-        // Encrypt file data
-        const buffer = new Uint8Array(await file.arrayBuffer());
-        // Normalize recipient address to ensure consistent format
-        const normalizedRecipient = normalizeSuiAddress(recipientAddress);
-        const { encryptedObject } = await sealClient.encrypt({
-          packageId: SEAL_PACKAGE_ID,
-          id: normalizedRecipient,
-          threshold: 1,
-          data: buffer,
+      const uploadedFilesMetadata: { blobId: string, name: string, type: string, size: number }[] = [];
+      const totalFiles = files.length;
+
+      // Import dependencies dynamically
+      const { encryptFileStreaming } = await import('../lib/seal/streaming-encryption');
+      const { uploadToWalrus } = await import('../lib/walrus/client');
+
+      // Process files sequentially to avoid browser resource exhaustion
+      for (let i = 0; i < totalFiles; i++) {
+        const file = files[i];
+        let fileToUpload = file;
+
+        // Update status - show which file is being processed
+        setStatus(`Processing file ${i + 1} of ${totalFiles}: ${file.name}`);
+
+        // 1. Encrypt if private
+        if (!isPublic) {
+          setStatus(`Encrypting file ${i + 1} of ${totalFiles}: ${file.name}`);
+          const normalizedRecipient = normalizeSuiAddress(recipientAddress);
+          const encryptedBlob = await encryptFileStreaming({
+            file,
+            recipientAddress: normalizedRecipient,
+            onProgress: (progress) => {
+              // Calculate weighted progress (50% encryption, 50% upload)
+              const currentFileProgress = progress * 0.5;
+              const batchProgress = Math.round(((i * 100) + currentFileProgress) / totalFiles);
+              setUploadProgress(batchProgress);
+              setStatus(`Encrypting file ${i + 1} of ${totalFiles}: ${file.name} (${progress}%)`);
+            }
+          });
+
+          fileToUpload = new File([encryptedBlob], file.name, {
+            type: file.type || "application/octet-stream"
+          });
+        }
+
+        // 2. Upload to Walrus
+        setStatus(`Uploading file ${i + 1} of ${totalFiles}: ${file.name}`);
+        const newBlobId = await uploadToWalrus(fileToUpload, storageEpochs, (progress: number, timeRemaining: number) => {
+          // Adjust progress for upload phase (50-100% of file progress)
+          const currentFileProgress = 50 + (progress * 0.5);
+          const batchProgress = Math.round(((i * 100) + currentFileProgress) / totalFiles);
+          setUploadProgress(batchProgress);
+          setRemainingTime(timeRemaining);
+          setStatus(`Uploading file ${i + 1} of ${totalFiles}: ${file.name} (${progress}% - ${timeRemaining}s remaining)`);
         });
 
-        // Create encrypted file for upload
-        fileToUpload = new File([encryptedObject], file.name, {
-          type: file.type || "application/octet-stream"
+        uploadedFilesMetadata.push({
+          blobId: newBlobId,
+          name: file.name,
+          type: file.type,
+          size: file.size
         });
       }
 
-      setStatus("Uploading to Walrus...");
+      setUploadProgress(100);
+      setStatus("Finalizing storage on Walrus network...");
 
-      // Upload directly to Walrus HTTP API
-      const { uploadToWalrus } = await import('@/app/lib/walrus/client');
-      const newBlobId = await uploadToWalrus(fileToUpload, (progress, timeRemaining) => {
-        setUploadProgress(progress);
-        setRemainingTime(timeRemaining);
-        if (progress === 100) {
-          setStatus("Finalizing storage on Walrus network...");
-        } else {
-          setStatus(`Uploading: ${progress}% - ${timeRemaining}s remaining`);
-        }
-      });
+      // 3. Batch Register on Blockchain
+      setStatus("⚠️ Please sign the transaction to store metadata for ALL files...");
 
-      setBlobId(newBlobId);
+      const { createBatchRegisterFileTransaction } = await import('../lib/sui/file-registry');
 
-      // Save metadata on blockchain
-      setStatus("Storing metadata on blockchain...");
-      const tx = createRegisterFileTransaction(
-        newBlobId,
+      const tx = createBatchRegisterFileTransaction(
+        uploadedFilesMetadata,
         isPublic ? account.address : normalizeSuiAddress(recipientAddress),
-        file.name,
-        file.type || "application/octet-stream",
-        file.size,
-          isPublic
+        storageEpochs,
+        isPublic
       );
 
       try {
-        await signAndExecute({ transaction: tx });
+        console.log("Executing batch transaction for", uploadedFilesMetadata.length, "files");
+        console.log("Transaction details:", {
+          files: uploadedFilesMetadata.map(f => ({ name: f.name, blobId: f.blobId })),
+          recipient: isPublic ? account.address : normalizeSuiAddress(recipientAddress),
+          storageEpochs,
+          isPublic
+        });
+        
+        const result = await signAndExecute({ transaction: tx });
+        console.log("Transaction successful:", result);
+        
         setCurrentStep(1);
-        setStatus(isPublic ? "Success! Public file stored on Walrus & Blockchain." : "Success! Encrypted file stored on Walrus & Blockchain.");
+        setStatus(`Success! ${totalFiles} files stored on Walrus & Blockchain.`);
+
+        // Store metadata for success view
+        setUploadedBatch(uploadedFilesMetadata);
+        if (uploadedFilesMetadata.length > 0) {
+          setBlobId(uploadedFilesMetadata[0].blobId);
+        }
       } catch (txError: any) {
-        // User rejected the transaction or it failed
         console.error("Blockchain transaction failed:", txError);
-        setError(
-          "⚠️ File uploaded to Walrus but metadata NOT stored on blockchain. " +
-          "You rejected the transaction or it failed. " +
-          "The file exists at blob ID: " + newBlobId + " but won't appear in your history."
-        );
-        // Still set blobId so user can manually access it
-      setCurrentStep(1);
+        console.error("Error details:", {
+          message: txError?.message,
+          code: txError?.code,
+          data: txError?.data,
+          stack: txError?.stack
+        });
+        setError("⚠️ Files uploaded to Walrus but metadata NOT stored on blockchain. Transaction failed: " + (txError?.message || "Unknown error"));
+        setCurrentStep(1);
         return;
       }
     } catch (e: any) {
@@ -199,9 +341,25 @@ function UploadContent() {
   };
 
   // ----- Download Handler -----
-  const handleDownload = async () => {
-    if (!blobId) return;
+  const handleDownload = async (targetBlobId?: string, fileName?: string, fileType?: string) => {
+    // Use direct parameters if provided, otherwise fall back to state
+    const downloadBlobId = targetBlobId || blobId;
+    const downloadFileName = fileName || files[0]?.name || `walrus_file_${downloadBlobId.slice(0, 6)}`;
+    const downloadFileType = fileType || files[0]?.type || "application/octet-stream";
+
+    if (!downloadBlobId) return;
+    if (isExpired) {
+      setError("Cannot download: This file has expired.");
+      return;
+    }
+
+    // Prevent blocking if user clicks multiple files quickly
+    if (isDownloading) {
+      console.log("Download already in progress, queuing new download...");
+    }
+
     try {
+      console.log("Downloading file:", { downloadBlobId, downloadFileName, downloadFileType });
       setIsDownloading(true);
       setStatus("Fetching file from Walrus...");
 
@@ -209,26 +367,28 @@ function UploadContent() {
       let isFilePublic = isPublic;
       let decryptRecipientAddress = recipientAddress;
 
-      // Try to get metadata from blockchain if not already known
-      if (!decryptRecipientAddress && blobId) {
+      // Try to get metadata from Blockchain if not already known
+      if (!decryptRecipientAddress && downloadBlobId) {
         try {
-          const fileRecord = await getFileByBlobId(client, blobId);
+          const fileRecord = await getFileByBlobId(client, downloadBlobId);
           if (fileRecord) {
-            isFilePublic = !!fileRecord.isPublic;
+            isFilePublic = fileRecord.isPublic;
             decryptRecipientAddress = fileRecord.recipient;
+            // Check expiration
+            if (fileRecord.expiresAt > 0 && currentEpoch > 0 && fileRecord.expiresAt <= currentEpoch) {
+              setIsExpired(true);
+              setError("Cannot download: This file has expired.");
+              return;
+            }
           }
         } catch (e) {
-          console.warn("Could not fetch file metadata from blockchain", e);
+          console.warn("Could not fetch file metadata", e);
         }
       }
 
-      // Download using HTTP API with progress tracking
-      const { downloadFromWalrus } = await import('@/app/lib/walrus/client');
-      setDownloadProgress(0);
-      const downloadedBlob = await downloadFromWalrus(blobId, (progress) => {
-        setDownloadProgress(progress);
-        setStatus(`Downloading: ${progress}%`);
-      });
+      // Download using HTTP API
+      const { downloadFromWalrus } = await import('../lib/walrus/client');
+      const downloadedBlob = await downloadFromWalrus(downloadBlobId);
 
       let finalBlob = downloadedBlob;
 
@@ -257,7 +417,6 @@ function UploadContent() {
         sessionKey.setPersonalMessageSignature(signature);
 
         setStatus("Decrypting file...");
-        setDownloadProgress(50); // Download complete, now decrypting
 
         // Fallback to current account address if still not found
         decryptRecipientAddress = decryptRecipientAddress || account.address;
@@ -272,7 +431,7 @@ function UploadContent() {
         // ✅ CRITICAL: Verify that the current user is the recipient
         // The bottled_message access policy only allows the recipient to decrypt
         if (normalizedAccount !== normalizedRecipient) {
-          throw new Error("Access denied: This file was encrypted for a different wallet address. Only the intended recipient can decrypt this file.");
+          throw new Error("Access is restricted. This is a privately shared file.");
         }
 
         const tx = new Transaction();
@@ -289,41 +448,28 @@ function UploadContent() {
         const decryptedBytes = await sealClient.decrypt({ data: encryptedBytes, sessionKey, txBytes });
 
         const decryptedArray = new Uint8Array(decryptedBytes);
-        finalBlob = new Blob([decryptedArray], { type: file?.type || "application/octet-stream" });
+        finalBlob = new Blob([decryptedArray], { type: downloadFileType });
       }
 
-      let downloadName = file?.name || `walrus_file_${blobId.slice(0, 6)}`;
+      let downloadName = downloadFileName;
 
+      // Add timestamp to ensure browser treats each download as unique
       const url = URL.createObjectURL(finalBlob);
       const a = document.createElement('a');
       a.href = url;
       a.download = downloadName;
+      a.setAttribute('data-downloadurl', `${finalBlob.type}:${downloadName}:${url}`);
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setDownloadProgress(100);
+      // Small delay before revoking to ensure download starts
+      setTimeout(() => URL.revokeObjectURL(url), 100);
       setStatus("Download complete.");
     } catch (e: any) {
       console.error(e);
-      // Sanitize error message - remove sensitive details
-      let errorMessage = "Download failed";
-      if (e.message) {
-        if (e.message.includes("Access denied")) {
-          errorMessage = "Access denied: This file was encrypted for a different wallet address. Only the intended recipient can decrypt this file.";
-        } else if (e.message.includes("recipient") || e.message.includes("address")) {
-          errorMessage = "Access denied: You don't have permission to decrypt this file.";
-        } else if (e.message.includes("network") || e.message.includes("fetch")) {
-          errorMessage = "Network error: Please check your connection and try again.";
-        } else {
-          errorMessage = "Download failed: " + e.message.replace(/0x[a-fA-F0-9]{64}/g, "[address]").substring(0, 100);
-        }
-      }
-      setError(errorMessage);
-      setDownloadProgress(0);
+      setError("Download failed: " + (e.message || e.toString()));
     } finally {
       setIsDownloading(false);
-      setTimeout(() => setDownloadProgress(0), 1000);
     }
   };
 
@@ -339,6 +485,14 @@ function UploadContent() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoDownloadBlobId, blobId, isPublic, isDownloading]);
+
+  // Check expiration for files in uploadedBatch
+  useEffect(() => {
+    if (uploadedBatch.length > 0 && currentEpoch > 0) {
+      // Check if any file in batch is expired (for display purposes)
+      // Individual files will be checked during download
+    }
+  }, [uploadedBatch, currentEpoch]);
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes';
@@ -473,7 +627,15 @@ function UploadContent() {
                               ) : (
                                 <>To: {(fileRecord.recipient || fileRecord.recipientAddress || '').slice(0, 8)}...{(fileRecord.recipient || fileRecord.recipientAddress || '').slice(-6)}</>
                               )}
-                              {' • '}{new Date((fileRecord.uploadedAt || 0) * 1000).toLocaleDateString()}
+                              {' • '}{getEpochDate(fileRecord.uploadedAt || 0).toLocaleDateString()}
+                              {fileRecord.expiresAt > 0 && (
+                                <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded border ${(fileRecord.expiresAt - currentEpoch) <= 3
+                                  ? "text-red-400 bg-red-500/10 border-red-500/20"
+                                  : "text-amber-400 bg-amber-500/10 border-amber-500/20"
+                                  }`}>
+                                  {getExpirationText(fileRecord.expiresAt)}
+                                </span>
+                              )}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
@@ -495,7 +657,7 @@ function UploadContent() {
                             <button
                               onClick={() => {
                                 setBlobId(fileRecord.blobId);
-                                setFile({ name: fileRecord.fileName, type: fileRecord.fileType || "application/octet-stream" } as File);
+                                setFiles([{ name: fileRecord.fileName, type: fileRecord.fileType || "application/octet-stream" } as File]);
                                 setRecipientAddress((fileRecord as any).recipient || (fileRecord as any).recipientAddress || account?.address || "");
                                 handleDownload();
                               }}
@@ -582,9 +744,9 @@ function UploadContent() {
               <div className="space-y-2">
                   <label className="text-xs font-mono text-gray-500 uppercase tracking-wider flex items-center gap-2">
                     <Paperclip size={12} />
-                    Attachment
+                    Attachments {files.length > 0 && `(${files.length})`}
                   </label>
-                  {!file ? (
+                  {files.length === 0 ? (
                     <div
                       onClick={() => !currentStep && document.getElementById('file-input')?.click()}
                       className="border-2 border-dashed border-white/10 rounded-xl h-48 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300 group hover:bg-white/[0.07] hover:border-white/20 bg-white/5"
@@ -592,8 +754,13 @@ function UploadContent() {
                   <input
                         id="file-input"
                         type="file"
+                        multiple
                     disabled={currentStep > 0}
-                        onChange={(e) => setFile(e.target.files?.[0] || null)}
+                        onChange={(e) => {
+                          if (e.target.files) {
+                            setFiles(Array.from(e.target.files));
+                          }
+                        }}
                         className="hidden"
                       />
                       <div className="p-4 rounded-full bg-white/5 text-gray-400 group-hover:text-white transition-colors">
@@ -602,29 +769,192 @@ function UploadContent() {
                       <div className="text-center">
                         <p className="text-sm text-gray-300 font-medium">Click to upload or drag and drop</p>
                         <p className="text-xs text-gray-500 mt-1">Max file size 5GB (Zero-Knowledge Encrypted)</p>
+                        <p className="text-xs text-gray-500 mt-1">Multiple files supported</p>
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between group hover:border-white/20 transition-all">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-eco-accent/10 rounded-lg flex items-center justify-center text-eco-accent">
-                          <FileText size={24} />
+                    <div className="bg-white/5 border border-white/10 rounded-xl p-3 max-h-40 overflow-y-auto space-y-2">
+                      {files.map((f, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-sm bg-white/5 p-2 rounded border border-white/10">
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            <FileText className="w-4 h-4 text-gray-400 shrink-0" />
+                            <span className="truncate text-white">{f.name}</span>
+                            <span className="text-xs text-gray-400">({formatFileSize(f.size)})</span>
+                          </div>
+                          <button
+                            onClick={() => setFiles(files.filter((_, i) => i !== idx))}
+                            className="text-gray-400 hover:text-red-400 transition-colors"
+                            disabled={currentStep > 0}
+                          >
+                            <X size={16} />
+                          </button>
                         </div>
-                        <div>
-                          <p className="text-white text-sm font-medium truncate max-w-[200px] md:max-w-[300px]">{file.name}</p>
-                          <p className="text-xs text-gray-400 font-mono mt-0.5">{formatFileSize(file.size)}</p>
-                        </div>
-                      </div>
-                  <button
-                        onClick={() => setFile(null)}
-                    disabled={currentStep > 0}
-                        className="p-2 hover:bg-white/10 rounded-full text-gray-500 hover:text-white transition-colors disabled:opacity-50"
-                  >
-                        <X size={18} />
-                  </button>
+                      ))}
                     </div>
                   )}
                 </div>
+
+            {/* Storage Duration Selector */}
+            <div className="space-y-3">
+              <label className="text-xs font-mono text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                <Database size={14} className="text-eco-accent" />
+                Storage Duration
+              </label>
+              
+              {/* Preset Duration Buttons */}
+              <div className="grid grid-cols-4 gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setDurationValue(1); setDurationUnit("days"); }}
+                  disabled={currentStep > 0}
+                  className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${
+                    durationValue === 1 && durationUnit === "days"
+                      ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
+                      : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  1 Day
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setDurationValue(7); setDurationUnit("days"); }}
+                  disabled={currentStep > 0}
+                  className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${
+                    durationValue === 7 && durationUnit === "days"
+                      ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
+                      : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  7 Days
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setDurationValue(30); setDurationUnit("days"); }}
+                  disabled={currentStep > 0}
+                  className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${
+                    durationValue === 30 && durationUnit === "days"
+                      ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
+                      : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  30 Days
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setDurationValue(1); setDurationUnit("years"); }}
+                  disabled={currentStep > 0}
+                  className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${
+                    durationValue === 1 && durationUnit === "years"
+                      ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
+                      : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  1 Year
+                </button>
+              </div>
+
+              {/* Custom Duration Input */}
+              <div className="relative bg-white/5 rounded-xl p-3 border border-white/10">
+                <div className="flex gap-2 items-stretch">
+                  {/* Count Input */}
+                  <div className="relative group">
+                    <label className="absolute -top-2 left-2 px-1.5 text-[10px] font-mono text-gray-500 bg-[#0A0A0A] z-10">
+                      Count
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={durationValue}
+                      onChange={(e) => {
+                        const val = Math.max(1, Number(e.target.value));
+                        setDurationValue(val);
+                      }}
+                      disabled={currentStep > 0}
+                      className="block w-28 text-sm bg-white/5 border border-white/10 rounded-lg px-4 py-3 pt-4 text-white placeholder-gray-500 focus:ring-2 focus:ring-eco-accent/50 focus:border-eco-accent/50 disabled:opacity-50 transition-all appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none hover:bg-white/10"
+                      placeholder="1"
+                    />
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setDurationValue(prev => Math.max(1, prev + 1))}
+                        disabled={currentStep > 0}
+                        className="w-4 h-3.5 flex items-center justify-center text-gray-400 hover:text-eco-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed rounded-t border border-white/10 bg-white/5 hover:bg-white/10"
+                        tabIndex={-1}
+                      >
+                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDurationValue(prev => Math.max(1, prev - 1))}
+                        disabled={currentStep > 0}
+                        className="w-4 h-3.5 flex items-center justify-center text-gray-400 hover:text-eco-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed rounded-b border border-white/10 border-t-0 bg-white/5 hover:bg-white/10"
+                        tabIndex={-1}
+                      >
+                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* Unit Dropdown */}
+                  <div className="relative flex-1 group">
+                    <label className="absolute -top-2 left-2 px-1.5 text-[10px] font-mono text-gray-500 bg-[#0A0A0A] z-10">
+                      Period
+                    </label>
+                    <select
+                      value={durationUnit}
+                      onChange={(e) => setDurationUnit(e.target.value)}
+                      disabled={currentStep > 0}
+                      className="block w-full text-sm bg-white/5 border border-white/10 rounded-lg px-4 py-3 pt-4 pr-10 text-white focus:ring-2 focus:ring-eco-accent/50 focus:border-eco-accent/50 disabled:opacity-50 transition-all cursor-pointer appearance-none hover:bg-white/10"
+                      style={{
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.25L7 8.75L10.5 5.25' stroke='%23${durationUnit === 'days' ? '4A90E2' : durationUnit === 'weeks' ? '4A90E2' : durationUnit === 'months' ? '4A90E2' : '4A90E2'}' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                        backgroundRepeat: 'no-repeat',
+                        backgroundPosition: 'right 0.75rem top 50%',
+                        paddingRight: '2.5rem'
+                      }}
+                    >
+                      <option value="days" className="bg-[#0A0A0A] text-white py-2">Days</option>
+                      <option value="weeks" className="bg-[#0A0A0A] text-white py-2">Weeks</option>
+                      <option value="months" className="bg-[#0A0A0A] text-white py-2">Months</option>
+                      <option value="years" className="bg-[#0A0A0A] text-white py-2">Years</option>
+                    </select>
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                      <div className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                        durationUnit === 'days' ? 'bg-eco-accent' :
+                        durationUnit === 'weeks' ? 'bg-eco-accent' :
+                        durationUnit === 'months' ? 'bg-eco-accent' :
+                        'bg-eco-accent'
+                      }`}></div>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Helper Text */}
+                <div className="mt-2 pt-2 border-t border-white/10">
+                  <p className="text-[10px] text-gray-500 font-mono flex items-center gap-1.5">
+                    <span className="w-1 h-1 rounded-full bg-eco-accent/60"></span>
+                    <span>Selected: {durationValue} {durationUnit} ({storageEpochs} epochs)</span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Info Footer */}
+              <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10">
+                <div className="flex items-center gap-2 text-xs text-gray-400">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Auto-deletes after expiration</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-eco-accent animate-pulse" />
+                  <span className="text-xs font-mono text-eco-accent font-semibold">
+                    {storageEpochs} Epochs
+                  </span>
+                </div>
+              </div>
+            </div>
 
             {/* Public Info */}
             {isPublic && (
@@ -646,18 +976,18 @@ function UploadContent() {
             )}
 
             {/* Action Buttons */}
-            {file && !blobId && (
+            {files.length > 0 && !uploadedBatch.length && (
               <div className="space-y-3 pt-2">
                 <button
                   onClick={handleUpload}
-                      disabled={currentStep !== 0 || !file || (!isPublic && !recipientAddress)}
+                      disabled={currentStep !== 0 || files.length === 0 || (!isPublic && !recipientAddress)}
                       className={`w-full py-4 rounded-xl font-medium text-lg flex items-center justify-center gap-2 transition-all shadow-lg ${
-                        !file || (!isPublic && !recipientAddress) || currentStep !== 0
+                        files.length === 0 || (!isPublic && !recipientAddress) || currentStep !== 0
                           ? 'bg-white/10 text-gray-500 cursor-not-allowed'
                           : 'bg-eco-accent text-white hover:bg-blue-600 hover:scale-[1.01] shadow-eco-accent/20'
                       }`}
                     >
-                      {status.includes("Uploading") ? (
+                      {status.includes("Uploading") || status.includes("Processing") ? (
                         <>
                           <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                           <span>Processing...</span>
@@ -670,14 +1000,14 @@ function UploadContent() {
                       ) : (
                         <>
                     <UploadCloud className="w-5 h-5" />
-                          <span>{isPublic ? 'Upload Public File' : 'Encrypt & Upload to Walrus'}</span>
+                          <span>{isPublic ? `Upload ${files.length} Public File${files.length > 1 ? 's' : ''}` : `Encrypt & Upload ${files.length} File${files.length > 1 ? 's' : ''} to Walrus`}</span>
                           <ArrowRight size={18} />
                         </>
                       )}
                 </button>
 
                 {/* Progress Bar */}
-                {status.includes("Uploading") && (
+                {(status.includes("Uploading") || status.includes("Encrypting") || status.includes("Processing")) && (
                       <div className="space-y-2">
                         <div className="w-full bg-white/10 rounded-full h-2.5 overflow-hidden">
                       <div
@@ -686,9 +1016,15 @@ function UploadContent() {
                       ></div>
                     </div>
                         <div className="flex justify-between text-xs text-gray-400">
-                      <span>{uploadProgress}% Uploaded</span>
-                      <span>{remainingTime > 0 ? `~${remainingTime}s remaining` : 'Calculating...'}</span>
+                      <span>{uploadProgress}% Complete</span>
+                      <span>{remainingTime > 0 ? `~${remainingTime}s remaining` : status.includes("Encrypting") ? 'Encrypting...' : 'Processing...'}</span>
                     </div>
+                    {/* Show current file being processed */}
+                    {status.includes("Processing file") && (
+                      <p className="text-xs text-gray-500 text-center mt-1">
+                        {status.split(": ")[1] || status}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -697,6 +1033,14 @@ function UploadContent() {
                       <div className="flex items-center gap-2 text-xs text-eco-accent bg-eco-accent/10 p-3 rounded-xl border border-eco-accent/20">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     <span>Processing on Walrus network... this may take a moment.</span>
+                  </div>
+                )}
+
+                {/* Storing on Blockchain Status */}
+                {status.includes("Storing") && (
+                      <div className="flex items-center gap-2 text-xs text-eco-accent bg-eco-accent/10 p-3 rounded-xl border border-eco-accent/20">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>{status}</span>
                   </div>
                 )}
               </div>
@@ -718,7 +1062,7 @@ function UploadContent() {
             <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-50" />
             
             <AnimatePresence mode="wait">
-              {status.includes("Uploading") || status.includes("Encrypting") || status.includes("Storing") || status.includes("Finalizing") ? (
+              {status.includes("Uploading") || status.includes("Encrypting") || status.includes("Storing") || status.includes("Finalizing") || status.includes("Processing") || status.includes("Starting") ? (
                 <motion.div
                   key="matrix-animation"
                   initial={{ opacity: 0, scale: 0.95 }}
@@ -728,11 +1072,17 @@ function UploadContent() {
                 >
                   <MatrixAnimation 
                     active={true} 
-                    message={status.includes("Encrypting") ? "ENCRYPTING" : status.includes("Uploading") ? "UPLOADING" : status.includes("Storing") ? "STORING" : "PROCESSING"}
-                    packets={status.includes("Uploading") ? "SENDING" : status.includes("Storing") ? "REGISTERING" : "PROCESSING"}
+                    message={status.includes("Encrypting") ? "ENCRYPTING" : status.includes("Uploading") ? "UPLOADING" : status.includes("Storing") ? "STORING" : status.includes("Processing") ? "PROCESSING" : "PROCESSING"}
+                    packets={status.includes("Uploading") ? "SENDING" : status.includes("Storing") ? "REGISTERING" : status.includes("Encrypting") ? "ENCRYPTING" : "PROCESSING"}
                   />
+                  {/* Display current status text */}
+                  <div className="absolute bottom-4 left-0 right-0 px-6 z-20">
+                    <p className="text-xs text-gray-400 font-mono text-center bg-black/50 px-3 py-2 rounded border border-white/10">
+                      {status}
+                    </p>
+                  </div>
                 </motion.div>
-              ) : !blobId ? (
+              ) : !blobId && uploadedBatch.length === 0 ? (
                 <motion.div
                   key="empty-state"
                   initial={{ opacity: 0, scale: 0.95 }}
@@ -748,14 +1098,14 @@ function UploadContent() {
                     Select a file and configure your transfer settings
                   </p>
                 </motion.div>
-              ) : blobId ? (
+              ) : blobId || uploadedBatch.length > 0 ? (
                 <motion.div
                   key="success-view"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
                   transition={{ duration: 0.6, ease: "easeOut" }}
-                  className="space-y-8"
+                  className="space-y-8 max-h-[800px] overflow-y-auto"
                 >
                   {/* Success Header */}
                   <div className="text-center space-y-4">
@@ -787,117 +1137,220 @@ function UploadContent() {
                         Transfer Complete
                       </h3>
                       <p className="text-sm text-gray-400 font-mono uppercase tracking-widest">
-                        Your {isPublic ? 'public' : 'encrypted'} file has been stored on Walrus
+                        {uploadedBatch.length > 0 ? uploadedBatch.length : 1} {(uploadedBatch.length > 0 ? uploadedBatch.length : 1) === 1 ? 'file' : 'files'} {isPublic ? 'publicly' : 'securely'} stored on Walrus
                       </p>
                     </motion.div>
                   </div>
 
-                  {/* Blob ID Section */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.4 }}
-                    className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4 backdrop-blur-sm"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-eco-accent animate-pulse" />
-                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-mono">
-                          Blob ID
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(blobId);
-                          setShareBlobId(blobId);
-                          setTimeout(() => setShareBlobId(""), 2000);
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-eco-accent/10 text-eco-accent rounded-lg hover:bg-eco-accent/20 border border-eco-accent/20 transition-all font-medium"
-                        title="Copy blob ID"
-                      >
-                        {shareBlobId === blobId ? (
-                          <>
-                            <CheckCircle className="w-3.5 h-3.5" />
-                            <span>Copied</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5" />
-                            <span>Copy</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                      <p className="text-xs font-mono text-eco-accent break-all select-all leading-relaxed">
-                        {blobId}
-                      </p>
-                    </div>
-                  </motion.div>
+                  {/* Batch Actions */}
+                  {uploadedBatch.length > 1 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.4 }}
+                      className="space-y-3"
+                    >
+                      {/* Share All Files Button (For Public Files) */}
+                      {isPublic && (
+                        <div className="bg-eco-accent/10 border border-eco-accent/20 rounded-xl p-4">
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <p className="text-sm font-semibold text-eco-accent flex items-center gap-2">
+                              <Share2 className="w-4 h-4" />
+                              Share All Files ({uploadedBatch.length} files)
+                            </p>
+                            <button
+                              onClick={() => {
+                                const blobIds = uploadedBatch.map(f => f.blobId).join(',');
+                                const link = `${window.location.origin}?blobIds=${blobIds}`;
+                                navigator.clipboard.writeText(link);
+                                setShareBlobId("batch-link");
+                                setTimeout(() => setShareBlobId(""), 2000);
+                              }}
+                              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-eco-accent text-white rounded-lg hover:bg-eco-accent/80 transition-all"
+                              title="Copy Batch Link"
+                            >
+                              {shareBlobId === "batch-link" ? (
+                                <>
+                                  <CheckCircle className="w-3.5 h-3.5" />
+                                  Copied!
+                                </>
+                              ) : (
+                                <>
+                                  <LinkIcon className="w-3.5 h-3.5" />
+                                  Copy Batch Link
+                                </>
+                              )}
+                            </button>
+                          </div>
+                          <p className="text-xs text-eco-accent/80">
+                            Recipients can view and download all {uploadedBatch.length} files from this single link
+                          </p>
+                        </div>
+                      )}
 
-                  {/* Share Link & QR Code (For Public Files) */}
-                  {isPublic && (
+                    </motion.div>
+                  )}
+
+                  {/* Batch File List - Blob IDs Only */}
+                  {uploadedBatch.length > 0 && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.5 }}
-                      className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-6 backdrop-blur-sm"
+                      className="space-y-3 max-h-60 overflow-y-auto"
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <LinkIcon className="w-4 h-4 text-gray-400" />
-                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-mono">
-                            Shareable Link
-                          </p>
+                      {uploadedBatch.map((fileItem, idx) => (
+                        <div key={fileItem.blobId} className="bg-white/5 p-4 rounded-xl border border-white/10">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-mono text-eco-accent break-all select-all leading-relaxed">
+                                {fileItem.blobId}
+                              </p>
+                            </div>
+                            <div className="flex gap-2 shrink-0">
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(fileItem.blobId);
+                                  setShareBlobId(fileItem.blobId);
+                                  setTimeout(() => setShareBlobId(""), 2000);
+                                }}
+                                className="p-1.5 text-xs bg-eco-accent/10 text-eco-accent rounded-lg hover:bg-eco-accent/20 transition-all"
+                                title="Copy Blob ID"
+                              >
+                                {shareBlobId === fileItem.blobId ? <CheckCircle className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                              </button>
+                              {isPublic && (
+                                <button
+                                  onClick={() => {
+                                    const link = `${window.location.origin}?blobId=${fileItem.blobId}`;
+                                    navigator.clipboard.writeText(link);
+                                    setShareBlobId("link-" + fileItem.blobId);
+                                    setTimeout(() => setShareBlobId(""), 2000);
+                                  }}
+                                  className="p-1.5 text-xs bg-eco-accent/10 text-eco-accent rounded-lg hover:bg-eco-accent/20 transition-all"
+                                  title="Copy Link"
+                                >
+                                  {shareBlobId === "link-" + fileItem.blobId ? <CheckCircle className="w-3 h-3" /> : <LinkIcon className="w-3 h-3" />}
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                        <button
-                          onClick={() => {
-                            const link = `${window.location.origin}?blobId=${blobId}`;
-                            navigator.clipboard.writeText(link);
-                            setShareBlobId("link-" + blobId);
-                            setTimeout(() => setShareBlobId(""), 2000);
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-eco-accent/10 text-eco-accent rounded-lg hover:bg-eco-accent/20 border border-eco-accent/20 transition-all font-medium"
-                          title="Copy Link"
-                        >
-                          {shareBlobId === "link-" + blobId ? (
-                            <>
-                              <CheckCircle className="w-3.5 h-3.5" />
-                              <span>Copied</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5" />
-                              <span>Copy</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                      
-                      <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                        <p className="text-xs font-mono text-eco-accent break-all select-all leading-relaxed">
-                          {typeof window !== 'undefined' ? `${window.location.origin}?blobId=${blobId}` : `.../?blobId=${blobId}`}
-                        </p>
-                      </div>
-
-                      <div className="flex flex-col items-center gap-4 pt-4 border-t border-white/10">
-                        <div className="flex items-center gap-2">
-                          <QrCode className="w-4 h-4 text-gray-400" />
-                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-mono">
-                            Scan to Download
-                          </p>
-                        </div>
-                        <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-                          <QRCodeSVG
-                            value={typeof window !== 'undefined' ? `${window.location.origin}?blobId=${blobId}` : blobId}
-                            size={180}
-                            level={"M"}
-                            bgColor="transparent"
-                            fgColor="#ffffff"
-                          />
-                        </div>
-                      </div>
+                      ))}
                     </motion.div>
+                  )}
+
+                  {/* Single File View (Backward Compatibility) */}
+                  {uploadedBatch.length === 0 && blobId && (
+                    <>
+                      {/* Blob ID Section */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.4 }}
+                        className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4 backdrop-blur-sm"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-1.5 h-1.5 rounded-full bg-eco-accent animate-pulse" />
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-mono">
+                              Blob ID
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(blobId);
+                              setShareBlobId(blobId);
+                              setTimeout(() => setShareBlobId(""), 2000);
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-eco-accent/10 text-eco-accent rounded-lg hover:bg-eco-accent/20 border border-eco-accent/20 transition-all font-medium"
+                            title="Copy blob ID"
+                          >
+                            {shareBlobId === blobId ? (
+                              <>
+                                <CheckCircle className="w-3.5 h-3.5" />
+                                <span>Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" />
+                                <span>Copy</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                          <p className="text-xs font-mono text-eco-accent break-all select-all leading-relaxed">
+                            {blobId}
+                          </p>
+                        </div>
+                      </motion.div>
+
+                      {/* Share Link & QR Code (For Public Files) */}
+                      {isPublic && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.5 }}
+                          className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-6 backdrop-blur-sm"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <LinkIcon className="w-4 h-4 text-gray-400" />
+                              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-mono">
+                                Shareable Link
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const link = `${window.location.origin}?blobId=${blobId}`;
+                                navigator.clipboard.writeText(link);
+                                setShareBlobId("link-" + blobId);
+                                setTimeout(() => setShareBlobId(""), 2000);
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-eco-accent/10 text-eco-accent rounded-lg hover:bg-eco-accent/20 border border-eco-accent/20 transition-all font-medium"
+                              title="Copy Link"
+                            >
+                              {shareBlobId === "link-" + blobId ? (
+                                <>
+                                  <CheckCircle className="w-3.5 h-3.5" />
+                                  <span>Copied</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3.5 h-3.5" />
+                                  <span>Copy</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                          
+                          <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                            <p className="text-xs font-mono text-eco-accent break-all select-all leading-relaxed">
+                              {typeof window !== 'undefined' ? `${window.location.origin}?blobId=${blobId}` : `.../?blobId=${blobId}`}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-col items-center gap-4 pt-4 border-t border-white/10">
+                            <div className="flex items-center gap-2">
+                              <QrCode className="w-4 h-4 text-gray-400" />
+                              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-mono">
+                                Scan to Download
+                              </p>
+                            </div>
+                            <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+                              <QRCodeSVG
+                                value={typeof window !== 'undefined' ? `${window.location.origin}?blobId=${blobId}` : blobId}
+                                size={180}
+                                level={"M"}
+                                bgColor="transparent"
+                                fgColor="#ffffff"
+                              />
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </>
                   )}
 
                   {/* Action Button */}
@@ -912,7 +1365,7 @@ function UploadContent() {
                       className="w-full px-8 py-4 bg-white/5 text-white rounded-xl font-medium hover:bg-white/10 transition-all border border-white/10 hover:border-white/20 flex items-center justify-center gap-2 group"
                     >
                       <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                      <span>Send Another File</span>
+                      <span>Send More Files</span>
                     </button>
                   </motion.div>
                 </motion.div>

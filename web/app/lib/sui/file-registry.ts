@@ -13,7 +13,11 @@ export interface FileMetadata {
     fileType: string;
     fileSize: number;
     uploadedAt: number;
+    expiresAt: number; // 🆕
+    storageEpochs: number; // 🆕
     isPublic: boolean;
+    objectId?: string; // Object ID for deletion (only available from owned objects)
+    _objectVersion?: number; // Internal use for sorting
 }
 
 // Type for FileUploaded event data
@@ -23,6 +27,8 @@ interface FileUploadedEvent {
     recipient: string;
     file_name: string;
     uploaded_at: string;
+    expires_at?: string; // Optional for backward compatibility
+    storage_epochs?: string; // Optional for backward compatibility
     is_public: boolean;
 }
 
@@ -41,6 +47,7 @@ export function createRegisterFileTransaction(
     fileName: string,
     fileType: string,
     fileSize: number,
+    storageEpochs: number, // 🆕
     isPublic: boolean
 ): Transaction {
     const tx = new Transaction();
@@ -53,9 +60,41 @@ export function createRegisterFileTransaction(
             tx.pure.string(fileName),
             tx.pure.string(fileType),
             tx.pure.u64(fileSize),
+            tx.pure.u64(storageEpochs), // 🆕
             tx.pure.bool(isPublic),
         ],
     });
+
+    return tx;
+}
+
+/**
+ * Create a transaction to register MULTIPLE files on-chain in a single batch
+ * Returns the transaction object for signing
+ */
+export function createBatchRegisterFileTransaction(
+    files: { blobId: string, name: string, type: string, size: number }[],
+    recipient: string,
+    storageEpochs: number,
+    isPublic: boolean
+): Transaction {
+    const tx = new Transaction();
+
+    // Loop through all files and add a moveCall for each one
+    for (const file of files) {
+        tx.moveCall({
+            target: getFileRegistryTarget("register_file"),
+            arguments: [
+                tx.pure.vector("u8", new TextEncoder().encode(file.blobId)),
+                tx.pure.address(recipient),
+                tx.pure.string(file.name),
+                tx.pure.string(file.type),
+                tx.pure.u64(file.size),
+                tx.pure.u64(storageEpochs),
+                tx.pure.bool(isPublic),
+            ],
+        });
+    }
 
     return tx;
 }
@@ -94,7 +133,10 @@ export async function getFilesByUploader(
                     fileType: fields.file_type,
                     fileSize: parseInt(fields.file_size),
                     uploadedAt: parseInt(fields.uploaded_at),
+                    expiresAt: parseInt(fields.expires_at || "0"),
+                    storageEpochs: parseInt(fields.storage_epochs || "0"),
                     isPublic: fields.is_public,
+                    objectId: obj.data?.objectId,
                 };
             });
     } catch (error) {
@@ -135,7 +177,10 @@ export async function getFilesByRecipient(
                     fileType: fields.file_type,
                     fileSize: parseInt(fields.file_size),
                     uploadedAt: parseInt(fields.uploaded_at),
+                    expiresAt: parseInt(fields.expires_at || "0"),
+                    storageEpochs: parseInt(fields.storage_epochs || "0"),
                     isPublic: fields.is_public,
+                    objectId: obj.data?.objectId,
                     // Store object version for sorting
                     _objectVersion: parseInt(obj.data!.version || "0"),
                 };
@@ -180,6 +225,8 @@ export async function getFilesByUploaderViaEvents(
                     fileType: "", // Not in event, would need to query object
                     fileSize: 0,  // Not in event, would need to query object
                     uploadedAt: parseInt(parsed.uploaded_at),
+                    expiresAt: parseInt(parsed.expires_at || "0"),
+                    storageEpochs: parseInt(parsed.storage_epochs || "0"),
                     isPublic: parsed.is_public,
                 };
             })
@@ -220,6 +267,8 @@ export async function getFileByBlobId(
                     fileType: "", // Not in event
                     fileSize: 0,  // Not in event
                     uploadedAt: parseInt(parsed.uploaded_at),
+                    expiresAt: parseInt(parsed.expires_at || "0"),
+                    storageEpochs: parseInt(parsed.storage_epochs || "0"),
                     isPublic: parsed.is_public,
                 };
             }
