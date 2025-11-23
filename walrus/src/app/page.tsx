@@ -347,25 +347,14 @@ function HomeContent() {
   };
 
   // ----- Download Handler -----
-  const handleDownload = async (targetBlobId?: string, fileName?: string, fileType?: string) => {
-    // Use direct parameters if provided, otherwise fall back to state
-    const downloadBlobId = targetBlobId || blobId;
-    const downloadFileName = fileName || files[0]?.name || `walrus_file_${downloadBlobId.slice(0, 6)}`;
-    const downloadFileType = fileType || files[0]?.type || "application/octet-stream";
-
-    if (!downloadBlobId) return;
+  const handleDownload = async () => {
+    if (!blobId) return;
     if (isExpired) {
       setError("Cannot download: This file has expired.");
       return;
     }
 
-    // Prevent blocking if user clicks multiple files quickly
-    if (isDownloading) {
-      console.log("Download already in progress, queuing new download...");
-    }
-
     try {
-      console.log("Downloading file:", { downloadBlobId, downloadFileName, downloadFileType });
       setIsDownloading(true);
       setStatus("Fetching file from Walrus...");
 
@@ -374,9 +363,9 @@ function HomeContent() {
       let decryptRecipientAddress = recipientAddress;
 
       // Try to get metadata from Blockchain if not already known
-      if (!decryptRecipientAddress && downloadBlobId) {
+      if (!decryptRecipientAddress && blobId) {
         try {
-          const fileRecord = await getFileByBlobId(client, downloadBlobId);
+          const fileRecord = await getFileByBlobId(client, blobId);
           if (fileRecord) {
             isFilePublic = fileRecord.isPublic;
             decryptRecipientAddress = fileRecord.recipient;
@@ -388,7 +377,7 @@ function HomeContent() {
 
       // Download using HTTP API
       const { downloadFromWalrus } = await import('../lib/walrus/client');
-      const downloadedBlob = await downloadFromWalrus(downloadBlobId);
+      const downloadedBlob = await downloadFromWalrus(blobId);
 
       let finalBlob = downloadedBlob;
 
@@ -448,22 +437,19 @@ function HomeContent() {
         const decryptedBytes = await sealClient.decrypt({ data: encryptedBytes, sessionKey, txBytes });
 
         const decryptedArray = new Uint8Array(decryptedBytes);
-        finalBlob = new Blob([decryptedArray], { type: downloadFileType });
+        finalBlob = new Blob([decryptedArray], { type: files[0]?.type || "application/octet-stream" });
       }
 
-      let downloadName = downloadFileName;
+      let downloadName = files[0]?.name || `walrus_file_${blobId.slice(0, 6)}`;
 
-      // Add timestamp to ensure browser treats each download as unique
       const url = URL.createObjectURL(finalBlob);
       const a = document.createElement('a');
       a.href = url;
       a.download = downloadName;
-      a.setAttribute('data-downloadurl', `${finalBlob.type}:${downloadName}:${url}`);
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      // Small delay before revoking to ensure download starts
-      setTimeout(() => URL.revokeObjectURL(url), 100);
+      URL.revokeObjectURL(url);
       setStatus("Download complete.");
     } catch (e: any) {
       console.error(e);
@@ -919,42 +905,6 @@ function HomeContent() {
                   </div>
                 )}
 
-                {/* Download All Button */}
-                {uploadedBatch.length > 1 && (
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-semibold text-emerald-900 flex items-center gap-2">
-                        <Download className="w-4 h-4" />
-                        Download All Files ({uploadedBatch.length} files)
-                      </p>
-                      <button
-                        onClick={async () => {
-                          setStatus("Downloading all files...");
-                          // Download files sequentially with delay to prevent browser blocking
-                          for (let i = 0; i < uploadedBatch.length; i++) {
-                            const fileItem = uploadedBatch[i];
-                            setStatus(`Downloading ${i + 1} of ${uploadedBatch.length}...`);
-                            await handleDownload(fileItem.blobId, fileItem.name, fileItem.type);
-                            // Wait 500ms between downloads to prevent browser blocking
-                            if (i < uploadedBatch.length - 1) {
-                              await new Promise(resolve => setTimeout(resolve, 500));
-                            }
-                          }
-                          setStatus("All files downloaded!");
-                        }}
-                        className="flex items-center gap-1 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700"
-                        title="Download All Files"
-                      >
-                        <Download className="w-4 h-4" />
-                        Download All
-                      </button>
-                    </div>
-                    <p className="text-xs text-emerald-700 mt-2">
-                      Downloads all {uploadedBatch.length} files to your device
-                    </p>
-                  </div>
-                )}
-
                 {/* Batch File List */}
                 <div className="space-y-3 max-h-60 overflow-y-auto text-left">
                   {uploadedBatch.map((fileItem, idx) => (
@@ -995,9 +945,13 @@ function HomeContent() {
                         {fileItem.blobId}
                       </p>
                       <button
-                        onClick={() => {
-                          // Pass file data directly instead of relying on state
-                          handleDownload(fileItem.blobId, fileItem.name, fileItem.type);
+                        onClick={async () => {
+                          // Set state for this specific file
+                          setBlobId(fileItem.blobId);
+                          setFiles([{ name: fileItem.name, type: fileItem.type } as File]);
+                          // Use Promise to ensure state updates propagate
+                          await new Promise(resolve => setTimeout(resolve, 10));
+                          handleDownload();
                         }}
                         className="mt-2 w-full py-1.5 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center justify-center gap-1"
                       >
