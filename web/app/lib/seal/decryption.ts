@@ -10,6 +10,7 @@ export interface DecryptOptions {
     encryptedData: Uint8Array;
     userAddress: string;
     recipientAddress: string;
+    signatureCallback: (message: Uint8Array) => Promise<string>; // Signature callback for wallet signing
 }
 
 /**
@@ -43,12 +44,16 @@ async function buildAuthTransaction(recipientAddress: string) {
 /**
  * Decrypt file data using Seal SDK
  * 
- * @param options - Decryption options including encrypted data and addresses
+ * @param options - Decryption options including encrypted data, addresses, and signature callback
  * @returns Decrypted file data
  */
 export async function decryptFile(options: DecryptOptions): Promise<Uint8Array> {
     // Generate session key
     const sessionKey = await createSessionKey(options.userAddress);
+
+    // Sign the personal message using the provided callback
+    const signature = await options.signatureCallback(sessionKey.getPersonalMessage());
+    sessionKey.setPersonalMessageSignature(signature);
 
     // Build authorization transaction
     const txBytes = await buildAuthTransaction(options.recipientAddress);

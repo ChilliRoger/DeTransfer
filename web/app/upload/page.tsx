@@ -4,10 +4,8 @@ import React, { useState, useEffect, Suspense } from "react";
 import { ConnectButton, useCurrentAccount, useSignAndExecuteTransaction, useSignPersonalMessage } from "@mysten/dapp-kit";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui/client";
 import { Transaction } from "@mysten/sui/transactions";
-import { fromHex, normalizeSuiAddress } from "@mysten/sui/utils";
+import { normalizeSuiAddress } from "@mysten/sui/utils";
 import { motion, AnimatePresence } from "framer-motion";
-
-import { SealClient, SessionKey } from "@mysten/seal";
 import { UploadCloud, CheckCircle, Loader2, AlertCircle, FileText, Download, Lock, Unlock, Trash2, Share2, Copy, QrCode, Link as LinkIcon, User, Paperclip, X, ArrowRight, CheckCircle2, Database, Wifi } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useSearchParams } from "next/navigation";
@@ -30,18 +28,6 @@ const MatrixAnimation = dynamic(() => import("@/components/MatrixAnimation"), {
 /* -------------------------------------------------------------------------- */
 const client = new SuiClient({
   url: getFullnodeUrl("testnet"),
-});
-
-// Seal Configuration – using simple_recipient access policy for recipient-only decryption
-const SEAL_PACKAGE_ID = "0xd1d471dd362206f61194c711d9dfcd1f8fd2d3e44df102efc15fa07332996247";
-const SEAL_MODULE = "simple_recipient";
-
-const sealClient = new SealClient({
-  suiClient: client,
-  serverConfigs: [
-    { objectId: "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75", weight: 1 },
-    { objectId: "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8", weight: 1 },
-  ],
 });
 
 function UploadContent() {
@@ -160,7 +146,7 @@ function UploadContent() {
 
   useEffect(() => {
     if (account && showHistory) {
-        loadUserFiles();
+      loadUserFiles();
     }
   }, [account, showHistory]);
 
@@ -215,7 +201,7 @@ function UploadContent() {
             setRecipientAddress(fileRecord.recipient);
             const isFilePublic = !!fileRecord.isPublic;
             setIsPublic(isFilePublic);
-            
+
             // Mark for auto-download if public file (will be handled by separate useEffect)
             if (isFilePublic) {
               setAutoDownloadBlobId(sharedBlobId);
@@ -320,10 +306,10 @@ function UploadContent() {
           storageEpochs,
           isPublic
         });
-        
+
         const result = await signAndExecute({ transaction: tx });
         console.log("Transaction successful:", result);
-        
+
         setCurrentStep(1);
         setStatus(`Success! ${totalFiles} files stored on Walrus & Blockchain.`);
 
@@ -409,25 +395,6 @@ function UploadContent() {
 
         const encryptedBytes = new Uint8Array(await downloadedBlob.arrayBuffer());
 
-        setStatus("Creating session key...");
-        // Normalize address for session key creation
-        const normalizedAccountAddress = normalizeSuiAddress(account.address);
-        const sessionKey = await SessionKey.create({
-          address: normalizedAccountAddress,
-          packageId: SEAL_PACKAGE_ID,
-          ttlMin: 5,
-          suiClient: client,
-        });
-
-        // ✅ CRITICAL: Sign the session key's personal message
-        setStatus("Please sign the personal message in your wallet...");
-        const { signature } = await signPersonalMessage({
-          message: sessionKey.getPersonalMessage(),
-        });
-        sessionKey.setPersonalMessageSignature(signature);
-
-        setStatus("Decrypting file...");
-
         // Fallback to current account address if still not found
         decryptRecipientAddress = decryptRecipientAddress || account.address;
         if (!decryptRecipientAddress) {
@@ -439,23 +406,25 @@ function UploadContent() {
         const normalizedRecipient = normalizeSuiAddress(decryptRecipientAddress);
 
         // ✅ CRITICAL: Verify that the current user is the recipient
-        // The bottled_message access policy only allows the recipient to decrypt
+        // The simple_recipient access policy only allows the recipient to decrypt
         if (normalizedAccount !== normalizedRecipient) {
           throw new Error("Access is restricted. This is a privately shared file.");
         }
 
-        const tx = new Transaction();
-        // Set the sender to the recipient address (must match account.address)
-        tx.setSender(normalizedAccount);
-        tx.moveCall({
-          target: `${SEAL_PACKAGE_ID}::${SEAL_MODULE}::seal_approve`,
-          arguments: [tx.pure.vector("u8", fromHex(normalizedRecipient))],
-        });
+        // Use modular decryption with signature callback
+        setStatus("Decrypting file...");
+        const { decryptFile } = await import('../lib/seal/decryption');
 
-        // @ts-ignore
-        const txBytes = await tx.build({ client, onlyTransactionKind: true });
-        // @ts-ignore
-        const decryptedBytes = await sealClient.decrypt({ data: encryptedBytes, sessionKey, txBytes });
+        const decryptedBytes = await decryptFile({
+          encryptedData: encryptedBytes,
+          userAddress: account.address,
+          recipientAddress: decryptRecipientAddress,
+          signatureCallback: async (message: Uint8Array) => {
+            setStatus("Please sign the personal message in your wallet...");
+            const { signature } = await signPersonalMessage({ message });
+            return signature;
+          }
+        });
 
         const decryptedArray = new Uint8Array(decryptedBytes);
         finalBlob = new Blob([decryptedArray], { type: downloadFileType });
@@ -516,10 +485,10 @@ function UploadContent() {
     <main className="min-h-screen flex flex-col items-center justify-center pt-32 pb-32 px-4 md:px-6 relative overflow-hidden bg-[#050505]">
       {/* Blob Animation Background - Optimized */}
       <div className="absolute inset-0 pointer-events-none">
-        <motion.div 
+        <motion.div
           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] md:w-[900px] md:h-[900px]"
         >
-          <motion.div 
+          <motion.div
             className="absolute inset-0 will-change-transform"
             animate={{
               rotate: 360,
@@ -534,10 +503,10 @@ function UploadContent() {
           </motion.div>
         </motion.div>
       </div>
-      
+
       <div className="relative z-10 w-full max-w-7xl">
         {/* Header */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8 }}
@@ -547,28 +516,26 @@ function UploadContent() {
             <h1 className="text-4xl md:text-6xl font-sans text-white mb-4 tracking-tight">Secure Transfer</h1>
             <p className="text-sm text-gray-400 font-mono uppercase tracking-widest">Testnet Storage + Seal Encryption</p>
           </div>
-          
+
           {/* Tab Navigation */}
           {account && (
             <div className="flex justify-center">
               <div className="inline-flex bg-white/5 p-1 rounded-xl border border-white/10">
                 <button
                   onClick={() => setShowHistory(false)}
-                  className={`px-6 py-2 text-sm font-medium rounded-lg transition-all ${
-                    !showHistory
+                  className={`px-6 py-2 text-sm font-medium rounded-lg transition-all ${!showHistory
                       ? 'bg-eco-accent text-white shadow-sm'
                       : 'text-gray-400 hover:text-white'
-                  }`}
+                    }`}
                 >
                   Upload
                 </button>
                 <button
                   onClick={() => setShowHistory(true)}
-                  className={`px-6 py-2 text-sm font-medium rounded-lg transition-all ${
-                    showHistory
+                  className={`px-6 py-2 text-sm font-medium rounded-lg transition-all ${showHistory
                       ? 'bg-eco-accent text-white shadow-sm'
                       : 'text-gray-400 hover:text-white'
-                  }`}
+                    }`}
                 >
                   History
                 </button>
@@ -685,372 +652,366 @@ function UploadContent() {
                   exit={{ opacity: 0, y: -20 }}
                   className="space-y-6"
                 >
-                {/* Recipient Address Input */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-mono text-gray-500 uppercase tracking-wider flex items-center gap-2">
-                      <User size={12} />
-                      Recipient Address (Sui / ETH / Sol)
-                    </label>
-                    {!isPublic && account && (
-                      <button
-                        onClick={() => setRecipientAddress(account.address)}
-                        disabled={currentStep > 0}
-                        className="px-3 py-1.5 text-xs bg-white/5 text-gray-300 rounded-lg hover:bg-white/10 border border-white/10 whitespace-nowrap transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-                      >
+                  {/* Recipient Address Input */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-mono text-gray-500 uppercase tracking-wider flex items-center gap-2">
                         <User size={12} />
-                        Use My Address
-                      </button>
-                    )}
-                  </div>
-                  <div className="relative group">
-                    <textarea
-                      value={recipientAddress}
-                      onChange={(e) => setRecipientAddress(e.target.value)}
-                      disabled={currentStep > 0 || isPublic}
-                      placeholder="0x..."
-                      rows={2}
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-5 py-3.5 text-white placeholder-gray-600 focus:outline-none focus:border-eco-accent/50 focus:bg-white/10 transition-all font-mono text-sm disabled:opacity-50 disabled:cursor-not-allowed resize-none overflow-wrap break-all"
-                      style={{ wordBreak: 'break-all' }}
-                    />
-                    <div className="absolute inset-0 rounded-xl bg-eco-accent/5 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity" />
-                  </div>
-                  {!isPublic && (
-                    <p className="text-xs text-gray-400 leading-relaxed">
-                      Only this address will be able to decrypt the file.
-                    </p>
-                  )}
-                </div>
-
-            {/* Upload Type Toggle */}
-                <div className="bg-white/5 p-1 rounded-xl flex border border-white/10">
-              <button
-                onClick={() => setIsPublic(false)}
-                    disabled={currentStep > 0}
-                    className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${!isPublic ? 'bg-eco-accent text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <Lock className="w-4 h-4" />
-                  Private (Encrypted)
-                </div>
-              </button>
-              <button
-                onClick={() => setIsPublic(true)}
-                    disabled={currentStep > 0}
-                    className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${isPublic ? 'bg-eco-accent text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <Share2 className="w-4 h-4" />
-                  Public (Shareable)
-                </div>
-              </button>
-            </div>
-
-                {/* File Selection */}
-              <div className="space-y-2">
-                  <label className="text-xs font-mono text-gray-500 uppercase tracking-wider flex items-center gap-2">
-                    <Paperclip size={12} />
-                    Attachments {files.length > 0 && `(${files.length})`}
-                  </label>
-                  {files.length === 0 ? (
-                    <div
-                      onClick={() => !currentStep && document.getElementById('file-input')?.click()}
-                      className="border-2 border-dashed border-white/10 rounded-xl h-48 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300 group hover:bg-white/[0.07] hover:border-white/20 bg-white/5"
-                    >
-                  <input
-                        id="file-input"
-                        type="file"
-                        multiple
-                    disabled={currentStep > 0}
-                        onChange={(e) => {
-                          if (e.target.files) {
-                            setFiles(Array.from(e.target.files));
-                          }
-                        }}
-                        className="hidden"
-                      />
-                      <div className="p-4 rounded-full bg-white/5 text-gray-400 group-hover:text-white transition-colors">
-                        <UploadCloud size={24} />
-                      </div>
-                      <div className="text-center">
-                        <p className="text-sm text-gray-300 font-medium">Click to upload or drag and drop</p>
-                        <p className="text-xs text-gray-500 mt-1">Max file size 5GB (Zero-Knowledge Encrypted)</p>
-                        <p className="text-xs text-gray-500 mt-1">Multiple files supported</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-white/5 border border-white/10 rounded-xl p-3 max-h-40 overflow-y-auto space-y-2">
-                      {files.map((f, idx) => (
-                        <div key={idx} className="flex items-center justify-between text-sm bg-white/5 p-2 rounded border border-white/10">
-                          <div className="flex items-center gap-2 overflow-hidden">
-                            <FileText className="w-4 h-4 text-gray-400 shrink-0" />
-                            <span className="truncate text-white">{f.name}</span>
-                            <span className="text-xs text-gray-400">({formatFileSize(f.size)})</span>
-                          </div>
-                          <button
-                            onClick={() => setFiles(files.filter((_, i) => i !== idx))}
-                            className="text-gray-400 hover:text-red-400 transition-colors"
-                            disabled={currentStep > 0}
-                          >
-                            <X size={16} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-            {/* Storage Duration Selector */}
-            <div className="space-y-3">
-              <label className="text-xs font-mono text-gray-400 uppercase tracking-wider flex items-center gap-2">
-                <Database size={14} className="text-eco-accent" />
-                Storage Duration
-              </label>
-              
-              {/* Preset Duration Buttons */}
-              <div className="grid grid-cols-4 gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setDurationValue(1); setDurationUnit("days"); }}
-                  disabled={currentStep > 0}
-                  className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${
-                    durationValue === 1 && durationUnit === "days"
-                      ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
-                      : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  1 Day
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setDurationValue(7); setDurationUnit("days"); }}
-                  disabled={currentStep > 0}
-                  className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${
-                    durationValue === 7 && durationUnit === "days"
-                      ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
-                      : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  7 Days
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setDurationValue(30); setDurationUnit("days"); }}
-                  disabled={currentStep > 0}
-                  className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${
-                    durationValue === 30 && durationUnit === "days"
-                      ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
-                      : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  30 Days
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setDurationValue(1); setDurationUnit("years"); }}
-                  disabled={currentStep > 0}
-                  className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${
-                    durationValue === 1 && durationUnit === "years"
-                      ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
-                      : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  1 Year
-                </button>
-              </div>
-
-              {/* Custom Duration Input */}
-              <div className="relative bg-white/5 rounded-xl p-3 border border-white/10">
-                <div className="flex gap-2 items-stretch">
-                  {/* Count Input */}
-                  <div className="relative group">
-                    <label className="absolute -top-2 left-2 px-1.5 text-[10px] font-mono text-gray-500 bg-[#0A0A0A] z-10">
-                      Count
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={durationValue}
-                      onChange={(e) => {
-                        const val = Math.max(1, Number(e.target.value));
-                        setDurationValue(val);
-                      }}
-                      disabled={currentStep > 0}
-                      className="block w-28 text-sm bg-white/5 border border-white/10 rounded-lg px-4 py-3 pt-4 text-white placeholder-gray-500 focus:ring-2 focus:ring-eco-accent/50 focus:border-eco-accent/50 disabled:opacity-50 transition-all appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none hover:bg-white/10"
-                      placeholder="1"
-                    />
-                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => setDurationValue(prev => Math.max(1, prev + 1))}
-                        disabled={currentStep > 0}
-                        className="w-4 h-3.5 flex items-center justify-center text-gray-400 hover:text-eco-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed rounded-t border border-white/10 bg-white/5 hover:bg-white/10"
-                        tabIndex={-1}
-                      >
-                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDurationValue(prev => Math.max(1, prev - 1))}
-                        disabled={currentStep > 0}
-                        className="w-4 h-3.5 flex items-center justify-center text-gray-400 hover:text-eco-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed rounded-b border border-white/10 border-t-0 bg-white/5 hover:bg-white/10"
-                        tabIndex={-1}
-                      >
-                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  
-                  {/* Unit Dropdown */}
-                  <div className="relative flex-1 group">
-                    <label className="absolute -top-2 left-2 px-1.5 text-[10px] font-mono text-gray-500 bg-[#0A0A0A] z-10">
-                      Period
-                    </label>
-                    <select
-                      value={durationUnit}
-                      onChange={(e) => setDurationUnit(e.target.value)}
-                      disabled={currentStep > 0}
-                      className="block w-full text-sm bg-white/5 border border-white/10 rounded-lg px-4 py-3 pt-4 pr-10 text-white focus:ring-2 focus:ring-eco-accent/50 focus:border-eco-accent/50 disabled:opacity-50 transition-all cursor-pointer appearance-none hover:bg-white/10"
-                      style={{
-                        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.25L7 8.75L10.5 5.25' stroke='%23${durationUnit === 'days' ? '4A90E2' : durationUnit === 'weeks' ? '4A90E2' : durationUnit === 'months' ? '4A90E2' : '4A90E2'}' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
-                        backgroundRepeat: 'no-repeat',
-                        backgroundPosition: 'right 0.75rem top 50%',
-                        paddingRight: '2.5rem'
-                      }}
-                    >
-                      <option value="days" className="bg-[#0A0A0A] text-white py-2">Days</option>
-                      <option value="weeks" className="bg-[#0A0A0A] text-white py-2">Weeks</option>
-                      <option value="months" className="bg-[#0A0A0A] text-white py-2">Months</option>
-                      <option value="years" className="bg-[#0A0A0A] text-white py-2">Years</option>
-                    </select>
-                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                      <div className={`w-1.5 h-1.5 rounded-full transition-colors ${
-                        durationUnit === 'days' ? 'bg-eco-accent' :
-                        durationUnit === 'weeks' ? 'bg-eco-accent' :
-                        durationUnit === 'months' ? 'bg-eco-accent' :
-                        'bg-eco-accent'
-                      }`}></div>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Helper Text */}
-                <div className="mt-2 pt-2 border-t border-white/10">
-                  <p className="text-[10px] text-gray-500 font-mono flex items-center gap-1.5">
-                    <span className="w-1 h-1 rounded-full bg-eco-accent/60"></span>
-                    <span>Selected: {durationValue} {durationUnit} ({storageEpochs} epochs)</span>
-                  </p>
-                </div>
-              </div>
-
-              {/* Info Footer */}
-              <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10">
-                <div className="flex items-center gap-2 text-xs text-gray-400">
-                  <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Auto-deletes after expiration</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-eco-accent animate-pulse" />
-                  <span className="text-xs font-mono text-eco-accent font-semibold">
-                    {storageEpochs} Epochs
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Public Info */}
-            {isPublic && (
-                  <div className="bg-eco-accent/10 text-eco-accent/90 p-4 rounded-xl text-sm flex items-start gap-3 border border-eco-accent/20">
-                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold">Public File</p>
-                      <p className="mt-1 text-eco-accent/80">This file will be stored on Walrus without encryption. Anyone with the Blob ID can access it.</p>
-                </div>
-              </div>
-            )}
-
-            {/* Error Banner */}
-            {error && (
-                  <div className="flex items-start gap-3 bg-red-500/10 text-red-400 p-4 rounded-xl text-sm border border-red-500/20 break-words overflow-hidden">
-                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                <p className="flex-1 break-words overflow-wrap-anywhere">{error}</p>
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            {files.length > 0 && !uploadedBatch.length && (
-              <div className="space-y-3 pt-2">
-                <button
-                  onClick={handleUpload}
-                      disabled={currentStep !== 0 || files.length === 0 || (!isPublic && !recipientAddress)}
-                      className={`w-full py-4 rounded-xl font-medium text-lg flex items-center justify-center gap-2 transition-all shadow-lg ${
-                        files.length === 0 || (!isPublic && !recipientAddress) || currentStep !== 0
-                          ? 'bg-white/10 text-gray-500 cursor-not-allowed'
-                          : 'bg-eco-accent text-white hover:bg-blue-600 hover:scale-[1.01] shadow-eco-accent/20'
-                      }`}
-                    >
-                      {status.includes("Uploading") || status.includes("Processing") ? (
-                        <>
-                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          <span>Processing...</span>
-                        </>
-                      ) : currentStep > 0 ? (
-                        <>
-                          <CheckCircle className="w-5 h-5" />
-                          <span>Upload Complete</span>
-                        </>
-                      ) : (
-                        <>
-                    <UploadCloud className="w-5 h-5" />
-                          <span>{isPublic ? `Upload ${files.length} Public File${files.length > 1 ? 's' : ''}` : `Encrypt & Upload ${files.length} File${files.length > 1 ? 's' : ''} to Walrus`}</span>
-                          <ArrowRight size={18} />
-                        </>
+                        Recipient Address (Sui / ETH / Sol)
+                      </label>
+                      {!isPublic && account && (
+                        <button
+                          onClick={() => setRecipientAddress(account.address)}
+                          disabled={currentStep > 0}
+                          className="px-3 py-1.5 text-xs bg-white/5 text-gray-300 rounded-lg hover:bg-white/10 border border-white/10 whitespace-nowrap transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                        >
+                          <User size={12} />
+                          Use My Address
+                        </button>
                       )}
-                </button>
-
-                {/* Progress Bar */}
-                {(status.includes("Uploading") || status.includes("Encrypting") || status.includes("Processing")) && (
-                      <div className="space-y-2">
-                        <div className="w-full bg-white/10 rounded-full h-2.5 overflow-hidden">
-                      <div
-                            className="bg-eco-accent h-2.5 rounded-full transition-all duration-300 ease-out"
-                        style={{ width: `${uploadProgress}%` }}
-                      ></div>
                     </div>
-                        <div className="flex justify-between text-xs text-gray-400">
-                      <span>{uploadProgress}% Complete</span>
-                      <span>{remainingTime > 0 ? `~${remainingTime}s remaining` : status.includes("Encrypting") ? 'Encrypting...' : 'Processing...'}</span>
+                    <div className="relative group">
+                      <textarea
+                        value={recipientAddress}
+                        onChange={(e) => setRecipientAddress(e.target.value)}
+                        disabled={currentStep > 0 || isPublic}
+                        placeholder="0x..."
+                        rows={2}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-5 py-3.5 text-white placeholder-gray-600 focus:outline-none focus:border-eco-accent/50 focus:bg-white/10 transition-all font-mono text-sm disabled:opacity-50 disabled:cursor-not-allowed resize-none overflow-wrap break-all"
+                        style={{ wordBreak: 'break-all' }}
+                      />
+                      <div className="absolute inset-0 rounded-xl bg-eco-accent/5 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity" />
                     </div>
-                    {/* Show current file being processed */}
-                    {status.includes("Processing file") && (
-                      <p className="text-xs text-gray-500 text-center mt-1">
-                        {status.split(": ")[1] || status}
+                    {!isPublic && (
+                      <p className="text-xs text-gray-400 leading-relaxed">
+                        Only this address will be able to decrypt the file.
                       </p>
                     )}
                   </div>
-                )}
 
-                {/* Finalizing Status */}
-                {status.includes("Finalizing") && (
-                      <div className="flex items-center gap-2 text-xs text-eco-accent bg-eco-accent/10 p-3 rounded-xl border border-eco-accent/20">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    <span>Processing on Walrus network... this may take a moment.</span>
+                  {/* Upload Type Toggle */}
+                  <div className="bg-white/5 p-1 rounded-xl flex border border-white/10">
+                    <button
+                      onClick={() => setIsPublic(false)}
+                      disabled={currentStep > 0}
+                      className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${!isPublic ? 'bg-eco-accent text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <Lock className="w-4 h-4" />
+                        Private (Encrypted)
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => setIsPublic(true)}
+                      disabled={currentStep > 0}
+                      className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${isPublic ? 'bg-eco-accent text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <Share2 className="w-4 h-4" />
+                        Public (Shareable)
+                      </div>
+                    </button>
                   </div>
-                )}
 
-                {/* Storing on Blockchain Status */}
-                {status.includes("Storing") && (
-                      <div className="flex items-center gap-2 text-xs text-eco-accent bg-eco-accent/10 p-3 rounded-xl border border-eco-accent/20">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    <span>{status}</span>
+                  {/* File Selection */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-mono text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                      <Paperclip size={12} />
+                      Attachments {files.length > 0 && `(${files.length})`}
+                    </label>
+                    {files.length === 0 ? (
+                      <div
+                        onClick={() => !currentStep && document.getElementById('file-input')?.click()}
+                        className="border-2 border-dashed border-white/10 rounded-xl h-48 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300 group hover:bg-white/[0.07] hover:border-white/20 bg-white/5"
+                      >
+                        <input
+                          id="file-input"
+                          type="file"
+                          multiple
+                          disabled={currentStep > 0}
+                          onChange={(e) => {
+                            if (e.target.files) {
+                              setFiles(Array.from(e.target.files));
+                            }
+                          }}
+                          className="hidden"
+                        />
+                        <div className="p-4 rounded-full bg-white/5 text-gray-400 group-hover:text-white transition-colors">
+                          <UploadCloud size={24} />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-sm text-gray-300 font-medium">Click to upload or drag and drop</p>
+                          <p className="text-xs text-gray-500 mt-1">Max file size 5GB (Zero-Knowledge Encrypted)</p>
+                          <p className="text-xs text-gray-500 mt-1">Multiple files supported</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white/5 border border-white/10 rounded-xl p-3 max-h-40 overflow-y-auto space-y-2">
+                        {files.map((f, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-sm bg-white/5 p-2 rounded border border-white/10">
+                            <div className="flex items-center gap-2 overflow-hidden">
+                              <FileText className="w-4 h-4 text-gray-400 shrink-0" />
+                              <span className="truncate text-white">{f.name}</span>
+                              <span className="text-xs text-gray-400">({formatFileSize(f.size)})</span>
+                            </div>
+                            <button
+                              onClick={() => setFiles(files.filter((_, i) => i !== idx))}
+                              className="text-gray-400 hover:text-red-400 transition-colors"
+                              disabled={currentStep > 0}
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
+
+                  {/* Storage Duration Selector */}
+                  <div className="space-y-3">
+                    <label className="text-xs font-mono text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                      <Database size={14} className="text-eco-accent" />
+                      Storage Duration
+                    </label>
+
+                    {/* Preset Duration Buttons */}
+                    <div className="grid grid-cols-4 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setDurationValue(1); setDurationUnit("days"); }}
+                        disabled={currentStep > 0}
+                        className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${durationValue === 1 && durationUnit === "days"
+                            ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
+                            : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      >
+                        1 Day
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setDurationValue(7); setDurationUnit("days"); }}
+                        disabled={currentStep > 0}
+                        className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${durationValue === 7 && durationUnit === "days"
+                            ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
+                            : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      >
+                        7 Days
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setDurationValue(30); setDurationUnit("days"); }}
+                        disabled={currentStep > 0}
+                        className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${durationValue === 30 && durationUnit === "days"
+                            ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
+                            : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      >
+                        30 Days
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setDurationValue(1); setDurationUnit("years"); }}
+                        disabled={currentStep > 0}
+                        className={`px-3 py-2 text-xs font-medium rounded-lg transition-all border ${durationValue === 1 && durationUnit === "years"
+                            ? "bg-eco-accent/20 text-eco-accent border-eco-accent/50"
+                            : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20"
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      >
+                        1 Year
+                      </button>
+                    </div>
+
+                    {/* Custom Duration Input */}
+                    <div className="relative bg-white/5 rounded-xl p-3 border border-white/10">
+                      <div className="flex gap-2 items-stretch">
+                        {/* Count Input */}
+                        <div className="relative group">
+                          <label className="absolute -top-2 left-2 px-1.5 text-[10px] font-mono text-gray-500 bg-[#0A0A0A] z-10">
+                            Count
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={durationValue}
+                            onChange={(e) => {
+                              const val = Math.max(1, Number(e.target.value));
+                              setDurationValue(val);
+                            }}
+                            disabled={currentStep > 0}
+                            className="block w-28 text-sm bg-white/5 border border-white/10 rounded-lg px-4 py-3 pt-4 text-white placeholder-gray-500 focus:ring-2 focus:ring-eco-accent/50 focus:border-eco-accent/50 disabled:opacity-50 transition-all appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none hover:bg-white/10"
+                            placeholder="1"
+                          />
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setDurationValue(prev => Math.max(1, prev + 1))}
+                              disabled={currentStep > 0}
+                              className="w-4 h-3.5 flex items-center justify-center text-gray-400 hover:text-eco-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed rounded-t border border-white/10 bg-white/5 hover:bg-white/10"
+                              tabIndex={-1}
+                            >
+                              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDurationValue(prev => Math.max(1, prev - 1))}
+                              disabled={currentStep > 0}
+                              className="w-4 h-3.5 flex items-center justify-center text-gray-400 hover:text-eco-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed rounded-b border border-white/10 border-t-0 bg-white/5 hover:bg-white/10"
+                              tabIndex={-1}
+                            >
+                              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Unit Dropdown */}
+                        <div className="relative flex-1 group">
+                          <label className="absolute -top-2 left-2 px-1.5 text-[10px] font-mono text-gray-500 bg-[#0A0A0A] z-10">
+                            Period
+                          </label>
+                          <select
+                            value={durationUnit}
+                            onChange={(e) => setDurationUnit(e.target.value)}
+                            disabled={currentStep > 0}
+                            className="block w-full text-sm bg-white/5 border border-white/10 rounded-lg px-4 py-3 pt-4 pr-10 text-white focus:ring-2 focus:ring-eco-accent/50 focus:border-eco-accent/50 disabled:opacity-50 transition-all cursor-pointer appearance-none hover:bg-white/10"
+                            style={{
+                              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.25L7 8.75L10.5 5.25' stroke='%23${durationUnit === 'days' ? '4A90E2' : durationUnit === 'weeks' ? '4A90E2' : durationUnit === 'months' ? '4A90E2' : '4A90E2'}' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                              backgroundRepeat: 'no-repeat',
+                              backgroundPosition: 'right 0.75rem top 50%',
+                              paddingRight: '2.5rem'
+                            }}
+                          >
+                            <option value="days" className="bg-[#0A0A0A] text-white py-2">Days</option>
+                            <option value="weeks" className="bg-[#0A0A0A] text-white py-2">Weeks</option>
+                            <option value="months" className="bg-[#0A0A0A] text-white py-2">Months</option>
+                            <option value="years" className="bg-[#0A0A0A] text-white py-2">Years</option>
+                          </select>
+                          <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                            <div className={`w-1.5 h-1.5 rounded-full transition-colors ${durationUnit === 'days' ? 'bg-eco-accent' :
+                                durationUnit === 'weeks' ? 'bg-eco-accent' :
+                                  durationUnit === 'months' ? 'bg-eco-accent' :
+                                    'bg-eco-accent'
+                              }`}></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Helper Text */}
+                      <div className="mt-2 pt-2 border-t border-white/10">
+                        <p className="text-[10px] text-gray-500 font-mono flex items-center gap-1.5">
+                          <span className="w-1 h-1 rounded-full bg-eco-accent/60"></span>
+                          <span>Selected: {durationValue} {durationUnit} ({storageEpochs} epochs)</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Info Footer */}
+                    <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10">
+                      <div className="flex items-center gap-2 text-xs text-gray-400">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Auto-deletes after expiration</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-eco-accent animate-pulse" />
+                        <span className="text-xs font-mono text-eco-accent font-semibold">
+                          {storageEpochs} Epochs
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Public Info */}
+                  {isPublic && (
+                    <div className="bg-eco-accent/10 text-eco-accent/90 p-4 rounded-xl text-sm flex items-start gap-3 border border-eco-accent/20">
+                      <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold">Public File</p>
+                        <p className="mt-1 text-eco-accent/80">This file will be stored on Walrus without encryption. Anyone with the Blob ID can access it.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Error Banner */}
+                  {error && (
+                    <div className="flex items-start gap-3 bg-red-500/10 text-red-400 p-4 rounded-xl text-sm border border-red-500/20 break-words overflow-hidden">
+                      <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                      <p className="flex-1 break-words overflow-wrap-anywhere">{error}</p>
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  {files.length > 0 && !uploadedBatch.length && (
+                    <div className="space-y-3 pt-2">
+                      <button
+                        onClick={handleUpload}
+                        disabled={currentStep !== 0 || files.length === 0 || (!isPublic && !recipientAddress)}
+                        className={`w-full py-4 rounded-xl font-medium text-lg flex items-center justify-center gap-2 transition-all shadow-lg ${files.length === 0 || (!isPublic && !recipientAddress) || currentStep !== 0
+                            ? 'bg-white/10 text-gray-500 cursor-not-allowed'
+                            : 'bg-eco-accent text-white hover:bg-blue-600 hover:scale-[1.01] shadow-eco-accent/20'
+                          }`}
+                      >
+                        {status.includes("Uploading") || status.includes("Processing") ? (
+                          <>
+                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <span>Processing...</span>
+                          </>
+                        ) : currentStep > 0 ? (
+                          <>
+                            <CheckCircle className="w-5 h-5" />
+                            <span>Upload Complete</span>
+                          </>
+                        ) : (
+                          <>
+                            <UploadCloud className="w-5 h-5" />
+                            <span>{isPublic ? `Upload ${files.length} Public File${files.length > 1 ? 's' : ''}` : `Encrypt & Upload ${files.length} File${files.length > 1 ? 's' : ''} to Walrus`}</span>
+                            <ArrowRight size={18} />
+                          </>
+                        )}
+                      </button>
+
+                      {/* Progress Bar */}
+                      {(status.includes("Uploading") || status.includes("Encrypting") || status.includes("Processing")) && (
+                        <div className="space-y-2">
+                          <div className="w-full bg-white/10 rounded-full h-2.5 overflow-hidden">
+                            <div
+                              className="bg-eco-accent h-2.5 rounded-full transition-all duration-300 ease-out"
+                              style={{ width: `${uploadProgress}%` }}
+                            ></div>
+                          </div>
+                          <div className="flex justify-between text-xs text-gray-400">
+                            <span>{uploadProgress}% Complete</span>
+                            <span>{remainingTime > 0 ? `~${remainingTime}s remaining` : status.includes("Encrypting") ? 'Encrypting...' : 'Processing...'}</span>
+                          </div>
+                          {/* Show current file being processed */}
+                          {status.includes("Processing file") && (
+                            <p className="text-xs text-gray-500 text-center mt-1">
+                              {status.split(": ")[1] || status}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Finalizing Status */}
+                      {status.includes("Finalizing") && (
+                        <div className="flex items-center gap-2 text-xs text-eco-accent bg-eco-accent/10 p-3 rounded-xl border border-eco-accent/20">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>Processing on Walrus network... this may take a moment.</span>
+                        </div>
+                      )}
+
+                      {/* Storing on Blockchain Status */}
+                      {status.includes("Storing") && (
+                        <div className="flex items-center gap-2 text-xs text-eco-accent bg-eco-accent/10 p-3 rounded-xl border border-eco-accent/20">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>{status}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                 </motion.div>
               )}
@@ -1066,7 +1027,7 @@ function UploadContent() {
             className="bg-[#0A0A0A]/80 backdrop-blur-xl border border-white/10 rounded-3xl p-8 md:p-10 shadow-2xl relative overflow-hidden"
           >
             <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-50" />
-            
+
             <AnimatePresence mode="wait">
               {status.includes("Uploading") || status.includes("Encrypting") || status.includes("Storing") || status.includes("Finalizing") || status.includes("Processing") || status.includes("Starting") ? (
                 <motion.div
@@ -1076,8 +1037,8 @@ function UploadContent() {
                   exit={{ opacity: 0, scale: 0.95 }}
                   className="w-full h-full"
                 >
-                  <MatrixAnimation 
-                    active={true} 
+                  <MatrixAnimation
+                    active={true}
                     message={status.includes("Encrypting") ? "ENCRYPTING" : status.includes("Uploading") ? "UPLOADING" : status.includes("Storing") ? "STORING" : status.includes("Processing") ? "PROCESSING" : "PROCESSING"}
                     packets={status.includes("Uploading") ? "SENDING" : status.includes("Storing") ? "REGISTERING" : status.includes("Encrypting") ? "ENCRYPTING" : "PROCESSING"}
                   />
@@ -1115,11 +1076,11 @@ function UploadContent() {
                 >
                   {/* Success Header */}
                   <div className="text-center space-y-4">
-                    <motion.div 
+                    <motion.div
                       initial={{ scale: 0, rotate: -180 }}
                       animate={{ scale: 1, rotate: 0 }}
-                      transition={{ 
-                        type: "spring", 
+                      transition={{
+                        type: "spring",
                         duration: 0.8,
                         delay: 0.1
                       }}
@@ -1132,7 +1093,7 @@ function UploadContent() {
                         <CheckCircle2 size={64} className="text-eco-accent" />
                       </div>
                     </motion.div>
-                    
+
                     <motion.div
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
@@ -1390,7 +1351,7 @@ function UploadContent() {
                               )}
                             </button>
                           </div>
-                          
+
                           <div className="bg-white/5 rounded-xl p-4 border border-white/10">
                             <p className="text-xs font-mono text-eco-accent break-all select-all leading-relaxed">
                               {typeof window !== 'undefined' ? `${window.location.origin}/download?blobId=${blobId}` : `.../download?blobId=${blobId}`}
@@ -1443,7 +1404,7 @@ function UploadContent() {
 
       {/* Bottom Transition Gradient */}
       <div className="absolute bottom-0 left-0 right-0 h-48 bg-gradient-to-b from-transparent via-[#050505]/50 to-[#050505] pointer-events-none" />
-      
+
       {/* Seamless Footer Transition */}
       <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-b from-transparent to-black/20 pointer-events-none" />
     </main>
