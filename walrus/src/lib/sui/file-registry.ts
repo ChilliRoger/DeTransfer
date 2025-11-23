@@ -69,6 +69,37 @@ export function createRegisterFileTransaction(
 }
 
 /**
+ * Create a transaction to register MULTIPLE files on-chain in a single batch
+ * Returns the transaction object for signing
+ */
+export function createBatchRegisterFileTransaction(
+    files: { blobId: string, name: string, type: string, size: number }[],
+    recipient: string,
+    storageEpochs: number,
+    isPublic: boolean
+): Transaction {
+    const tx = new Transaction();
+
+    // Loop through all files and add a moveCall for each one
+    for (const file of files) {
+        tx.moveCall({
+            target: getFileRegistryTarget("register_file"),
+            arguments: [
+                tx.pure.vector("u8", new TextEncoder().encode(file.blobId)),
+                tx.pure.address(recipient),
+                tx.pure.string(file.name),
+                tx.pure.string(file.type),
+                tx.pure.u64(file.size),
+                tx.pure.u64(storageEpochs),
+                tx.pure.bool(isPublic),
+            ],
+        });
+    }
+
+    return tx;
+}
+
+/**
  * Create a transaction to delete a file record from on-chain
  * Returns the transaction object for signing
  */

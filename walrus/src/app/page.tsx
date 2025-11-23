@@ -44,7 +44,8 @@ function HomeContent() {
   const searchParams = useSearchParams();
 
   // --- State ---
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]); // 🆕 Support multiple files
+  const [uploadedBatch, setUploadedBatch] = useState<{ blobId: string, name: string, type: string, size: number }[]>([]); // Track batch uploads
   const [recipientAddress, setRecipientAddress] = useState("");
   const [status, setStatus] = useState("Idle");
   const [blobId, setBlobId] = useState("");
@@ -124,7 +125,7 @@ function HomeContent() {
 
   // Reset helper
   const reset = () => {
-    setFile(null);
+    setFiles([]);
     setBlobId("");
     setStatus("Idle");
     setCurrentStep(0);
@@ -137,6 +138,7 @@ function HomeContent() {
     setIsExpired(false);
     setDurationValue(1);
     setDurationUnit("days");
+    setUploadedBatch([]);
   };
 
   // Load user files from blockchain (files uploaded by user)
@@ -175,7 +177,44 @@ function HomeContent() {
   // Handle URL query params for shared files
   useEffect(() => {
     const sharedBlobId = searchParams.get("blobId");
-    if (sharedBlobId) {
+    const sharedBlobIds = searchParams.get("blobIds");
+
+    // Handle batch link (multiple files)
+    if (sharedBlobIds) {
+      const blobIdArray = sharedBlobIds.split(',').filter(id => id.trim());
+      const fetchBatchFiles = async () => {
+        try {
+          const batchMetadata: { blobId: string, name: string, type: string, size: number }[] = [];
+
+          for (const blobId of blobIdArray) {
+            const fileRecord = await getFileByBlobId(client, blobId.trim());
+            if (fileRecord) {
+              batchMetadata.push({
+                blobId: fileRecord.blobId,
+                name: fileRecord.fileName,
+                type: fileRecord.fileType,
+                size: fileRecord.fileSize
+              });
+
+              // Set public flag based on first file (all should be same in a batch)
+              if (batchMetadata.length === 1) {
+                setIsPublic(fileRecord.isPublic);
+              }
+            }
+          }
+
+          if (batchMetadata.length > 0) {
+            setUploadedBatch(batchMetadata);
+            setBlobId(batchMetadata[0].blobId); // Set first for backward compatibility
+          }
+        } catch (e) {
+          console.error("Failed to fetch batch files from URL", e);
+        }
+      };
+      fetchBatchFiles();
+    }
+    // Handle single file link
+    else if (sharedBlobId) {
       setAccessBlobId(sharedBlobId);
       // Auto-trigger access if we have a blobId
       const fetchSharedFile = async () => {
@@ -183,7 +222,7 @@ function HomeContent() {
           const fileRecord = await getFileByBlobId(client, sharedBlobId);
           if (fileRecord) {
             setBlobId(fileRecord.blobId);
-            setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
+            setFiles([{ name: fileRecord.fileName, type: fileRecord.fileType } as File]);
             setRecipientAddress(fileRecord.recipient);
             setIsPublic(fileRecord.isPublic);
             setAccessBlobId("");
@@ -212,76 +251,92 @@ function HomeContent() {
 
   // ----- Upload / Encryption Flow -----
   const handleUpload = async () => {
-    if (!file || !account) return;
+    if (files.length === 0 || !account) return;
     if (!isPublic && !recipientAddress) { setError("Please enter a recipient wallet address for private files."); return; }
 
     try {
       setError("");
-      let fileToUpload = file;
+      setStatus("Starting batch upload...");
 
-      if (!isPublic) {
-        setStatus("Encrypting file...");
-        const normalizedRecipient = normalizeSuiAddress(recipientAddress);
+      const uploadedFilesMetadata: { blobId: string, name: string, type: string, size: number }[] = [];
+      const totalFiles = files.length;
 
-        // ✅ Use streaming encryption to avoid memory crashes
-        const { encryptFileStreaming } = await import('../lib/seal/streaming-encryption');
-        const encryptedBlob = await encryptFileStreaming({
-          file,
-          recipientAddress: normalizedRecipient,
-          onProgress: (progress) => {
-            setUploadProgress(progress);
-            setStatus(`Encrypting: ${progress}%`);
-          }
+      // Import dependencies dynamically
+      const { encryptFileStreaming } = await import('../lib/seal/streaming-encryption');
+      const { uploadToWalrus } = await import('../lib/walrus/client');
+
+      // Process files sequentially to avoid browser resource exhaustion
+      for (let i = 0; i < totalFiles; i++) {
+        const file = files[i];
+        let fileToUpload = file;
+
+        // Update status
+        setStatus(`Processing file ${i + 1} of ${totalFiles}: ${file.name}`);
+
+        // 1. Encrypt if private
+        if (!isPublic) {
+          const normalizedRecipient = normalizeSuiAddress(recipientAddress);
+          const encryptedBlob = await encryptFileStreaming({
+            file,
+            recipientAddress: normalizedRecipient,
+            onProgress: (progress) => {
+              // Calculate weighted progress (50% encryption, 50% upload)
+              const currentFileProgress = progress * 0.5;
+              const batchProgress = Math.round(((i * 100) + currentFileProgress) / totalFiles);
+              setUploadProgress(batchProgress);
+            }
+          });
+
+          fileToUpload = new File([encryptedBlob], file.name, {
+            type: file.type || "application/octet-stream"
+          });
+        }
+
+        // 2. Upload to Walrus
+        const newBlobId = await uploadToWalrus(fileToUpload, storageEpochs, (progress, timeRemaining) => {
+          // Adjust progress for upload phase (50-100% of file progress)
+          const currentFileProgress = 50 + (progress * 0.5);
+          const batchProgress = Math.round(((i * 100) + currentFileProgress) / totalFiles);
+          setUploadProgress(batchProgress);
+          setRemainingTime(timeRemaining);
         });
 
-        // Create encrypted file for upload
-        fileToUpload = new File([encryptedBlob], file.name, {
-          type: file.type || "application/octet-stream"
+        uploadedFilesMetadata.push({
+          blobId: newBlobId,
+          name: file.name,
+          type: file.type,
+          size: file.size
         });
       }
 
-      setStatus("Uploading to Walrus...");
+      setUploadProgress(100);
+      setStatus("Finalizing storage on Walrus network...");
 
-      // Upload directly to Walrus HTTP API
-      const { uploadToWalrus } = await import('../lib/walrus/client');
-      const newBlobId = await uploadToWalrus(fileToUpload, storageEpochs, (progress, timeRemaining) => {
-        setUploadProgress(progress);
-        setRemainingTime(timeRemaining);
-        if (progress === 100) {
-          setStatus("Finalizing storage on Walrus network...");
-        } else {
-          setStatus(`Uploading: ${progress}% - ${timeRemaining}s remaining`);
-        }
-      });
+      // 3. Batch Register on Blockchain
+      setStatus("⚠️ Please sign the transaction to store metadata for ALL files...");
 
-      setBlobId(newBlobId);
+      const { createBatchRegisterFileTransaction } = await import('../lib/sui/file-registry');
 
-      // Save metadata on blockchain - THIS IS REQUIRED
-      setStatus("⚠️ Please sign the transaction to store metadata on blockchain...");
-      const tx = createRegisterFileTransaction(
-        newBlobId,
+      const tx = createBatchRegisterFileTransaction(
+        uploadedFilesMetadata,
         isPublic ? account.address : normalizeSuiAddress(recipientAddress),
-        file.name,
-        file.type,
-
-        file.size,
-        storageEpochs, // 🆕 Pass storage duration
+        storageEpochs,
         isPublic
       );
 
       try {
         await signAndExecute({ transaction: tx });
         setCurrentStep(1);
-        setStatus(isPublic ? "Success! Public file stored on Walrus & Blockchain." : "Success! Encrypted file stored on Walrus & Blockchain.");
+        setStatus(`Success! ${totalFiles} files stored on Walrus & Blockchain.`);
+
+        // Store metadata for success view
+        setUploadedBatch(uploadedFilesMetadata);
+        if (uploadedFilesMetadata.length > 0) {
+          setBlobId(uploadedFilesMetadata[0].blobId);
+        }
       } catch (txError: any) {
-        // User rejected the transaction or it failed
         console.error("Blockchain transaction failed:", txError);
-        setError(
-          "⚠️ File uploaded to Walrus but metadata NOT stored on blockchain. " +
-          "You rejected the transaction or it failed. " +
-          "The file exists at blob ID: " + newBlobId + " but won't appear in your history."
-        );
-        // Still set blobId so user can manually access it
+        setError("⚠️ Files uploaded to Walrus but metadata NOT stored on blockchain. Transaction failed.");
         setCurrentStep(1);
         return;
       }
@@ -382,10 +437,10 @@ function HomeContent() {
         const decryptedBytes = await sealClient.decrypt({ data: encryptedBytes, sessionKey, txBytes });
 
         const decryptedArray = new Uint8Array(decryptedBytes);
-        finalBlob = new Blob([decryptedArray], { type: file?.type || "application/octet-stream" });
+        finalBlob = new Blob([decryptedArray], { type: files[0]?.type || "application/octet-stream" });
       }
 
-      let downloadName = file?.name || `walrus_file_${blobId.slice(0, 6)}`;
+      let downloadName = files[0]?.name || `walrus_file_${blobId.slice(0, 6)}`;
 
       const url = URL.createObjectURL(finalBlob);
       const a = document.createElement('a');
@@ -488,7 +543,7 @@ function HomeContent() {
                       const fileRecord = await getFileByBlobId(client, accessBlobId);
                       if (fileRecord) {
                         setBlobId(fileRecord.blobId);
-                        setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
+                        setFiles([{ name: fileRecord.fileName, type: fileRecord.fileType } as File]);
                         setRecipientAddress(fileRecord.recipient);
                         setAccessBlobId("");
                         await handleDownload();
@@ -517,8 +572,8 @@ function HomeContent() {
                   <p className="text-slate-500 text-center py-8">No files uploaded yet</p>
                 ) : (
                   <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {userFiles.map((fileRecord) => (
-                      <div key={fileRecord.blobId} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg group">
+                    {userFiles.map((fileRecord, idx) => (
+                      <div key={`${fileRecord.blobId}-${idx}`} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg group">
                         <div className="flex-1">
                           <p className="font-medium text-sm">{fileRecord.fileName}</p>
                           <p className="text-xs text-slate-500">
@@ -557,7 +612,7 @@ function HomeContent() {
                           <button
                             onClick={() => {
                               setBlobId(fileRecord.blobId);
-                              setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
+                              setFiles([{ name: fileRecord.fileName, type: fileRecord.fileType } as File]);
                               setRecipientAddress(fileRecord.recipient || account?.address || "");
                               handleDownload();
                             }}
@@ -580,8 +635,8 @@ function HomeContent() {
                   <p className="text-slate-500 text-center py-8">No files shared with you yet</p>
                 ) : (
                   <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {sharedFiles.map((fileRecord) => (
-                      <div key={fileRecord.blobId} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg group">
+                    {sharedFiles.map((fileRecord, idx) => (
+                      <div key={`${fileRecord.blobId}-${idx}`} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg group">
                         <div className="flex-1">
                           <p className="font-medium text-sm">{fileRecord.fileName}</p>
                           <p className="text-xs text-slate-500">
@@ -600,7 +655,7 @@ function HomeContent() {
                           <button
                             onClick={() => {
                               setBlobId(fileRecord.blobId);
-                              setFile({ name: fileRecord.fileName, type: fileRecord.fileType } as File);
+                              setFiles([{ name: fileRecord.fileName, type: fileRecord.fileType } as File]);
                               setRecipientAddress(fileRecord.recipient);
                               handleDownload();
                             }}
@@ -620,14 +675,41 @@ function HomeContent() {
           <div className="space-y-6">
             {/* File Selection */}
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-700">Select File</label>
+              <label className="block text-sm font-medium text-slate-700">Select Files</label>
               <input
                 type="file"
+                multiple
                 disabled={currentStep > 0}
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                onChange={(e) => {
+                  if (e.target.files) {
+                    setFiles(Array.from(e.target.files));
+                  }
+                }}
                 className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-slate-200 rounded-lg p-2"
               />
             </div>
+
+            {/* Selected Files List */}
+            {files.length > 0 && (
+              <div className="bg-slate-50 rounded-lg p-3 max-h-40 overflow-y-auto space-y-2 border border-slate-200">
+                {files.map((f, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-sm bg-white p-2 rounded border border-slate-100">
+                    <div className="flex items-center gap-2 overflow-hidden">
+                      <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className="truncate">{f.name}</span>
+                      <span className="text-xs text-slate-400">({(f.size / 1024).toFixed(1)} KB)</span>
+                    </div>
+                    <button
+                      onClick={() => setFiles(files.filter((_, i) => i !== idx))}
+                      className="text-slate-400 hover:text-red-500"
+                      disabled={currentStep > 0}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Storage Duration Selector */}
             <div className="space-y-2">
@@ -729,7 +811,7 @@ function HomeContent() {
             )}
 
             {/* Action Buttons */}
-            {file && !blobId && (
+            {files.length > 0 && !uploadedBatch.length && (
               <div className="space-y-3 pt-2">
                 <button
                   onClick={handleUpload}
@@ -773,94 +855,122 @@ function HomeContent() {
             )}
 
             {/* Success View */}
-            {blobId && (
+            {uploadedBatch.length > 0 && (
               <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-6 text-center space-y-4">
                 <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
                   <UploadCloud className="w-8 h-8" />
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-emerald-900">Upload Successful!</h3>
-                  <p className="text-sm text-emerald-700">Your {isPublic ? 'public' : 'encrypted'} file has been permanently stored.</p>
-                </div>
-                <div className="bg-white p-3 rounded border border-emerald-200">
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <p className="text-xs font-semibold text-slate-700">Blob ID (Share this with recipient):</p>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(blobId);
-                        setShareBlobId(blobId);
-                        setTimeout(() => setShareBlobId(""), 2000);
-                      }}
-                      className="flex items-center gap-1 px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100"
-                      title="Copy blob ID"
-                    >
-                      {shareBlobId === blobId ? (
-                        <>
-                          <CheckCircle className="w-3 h-3" />
-                          Copied!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3 h-3" />
-                          Copy
-                        </>
-                      )}
-                    </button>
-                  </div>
-                  <p className="text-xs font-mono text-slate-500 break-all select-all">{blobId}</p>
+                  <p className="text-sm text-emerald-700">
+                    {uploadedBatch.length} {uploadedBatch.length === 1 ? 'file' : 'files'} {isPublic ? 'publicly' : 'securely'} stored on Walrus & Blockchain.
+                  </p>
                 </div>
 
-                {/* Share Link & QR Code (For Public Files) */}
-                {isPublic && (
-                  <div className="bg-white p-4 rounded border border-emerald-200 space-y-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-semibold text-slate-700 flex items-center gap-1">
-                        <LinkIcon className="w-3 h-3" />
-                        Shareable Link:
+                {/* Share All Files Button (For Public Files) */}
+                {isPublic && uploadedBatch.length > 1 && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <p className="text-sm font-semibold text-blue-900 flex items-center gap-2">
+                        <Share2 className="w-4 h-4" />
+                        Share All Files ({uploadedBatch.length} files)
                       </p>
                       <button
                         onClick={() => {
-                          const link = `${window.location.origin}?blobId=${blobId}`;
+                          const blobIds = uploadedBatch.map(f => f.blobId).join(',');
+                          const link = `${window.location.origin}?blobIds=${blobIds}`;
                           navigator.clipboard.writeText(link);
-                          setShareBlobId("link-" + blobId);
+                          setShareBlobId("batch-link");
                           setTimeout(() => setShareBlobId(""), 2000);
                         }}
-                        className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
-                        title="Copy Link"
+                        className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                        title="Copy Batch Link"
                       >
-                        {shareBlobId === "link-" + blobId ? (
+                        {shareBlobId === "batch-link" ? (
                           <>
-                            <CheckCircle className="w-3 h-3" />
+                            <CheckCircle className="w-4 h-4" />
                             Copied!
                           </>
                         ) : (
                           <>
-                            <Copy className="w-3 h-3" />
-                            Copy Link
+                            <LinkIcon className="w-4 h-4" />
+                            Copy Batch Link
                           </>
                         )}
                       </button>
                     </div>
-                    <p className="text-xs font-mono text-slate-500 break-all select-all bg-slate-50 p-2 rounded border border-slate-100">
-                      {typeof window !== 'undefined' ? `${window.location.origin}?blobId=${blobId}` : `.../?blobId=${blobId}`}
+                    <p className="text-xs text-blue-700">
+                      Recipients can view and download all {uploadedBatch.length} files from this single link
                     </p>
-
-                    <div className="flex flex-col items-center gap-2 pt-2 border-t border-slate-100">
-                      <p className="text-xs font-semibold text-slate-700 flex items-center gap-1">
-                        <QrCode className="w-3 h-3" />
-                        Scan to Download
-                      </p>
-                      <div className="bg-white p-2 rounded border border-slate-200">
-                        <QRCodeSVG
-                          value={typeof window !== 'undefined' ? `${window.location.origin}?blobId=${blobId}` : blobId}
-                          size={128}
-                          level={"M"}
-                        />
-                      </div>
-                    </div>
                   </div>
                 )}
 
+                {/* Batch File List */}
+                <div className="space-y-3 max-h-60 overflow-y-auto text-left">
+                  {uploadedBatch.map((fileItem, idx) => (
+                    <div key={fileItem.blobId} className="bg-white p-3 rounded border border-emerald-200 shadow-sm">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-sm truncate max-w-[200px]" title={fileItem.name}>
+                          {fileItem.name}
+                        </span>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(fileItem.blobId);
+                              setShareBlobId(fileItem.blobId);
+                              setTimeout(() => setShareBlobId(""), 2000);
+                            }}
+                            className="p-1.5 text-xs bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100"
+                            title="Copy Blob ID"
+                          >
+                            {shareBlobId === fileItem.blobId ? <CheckCircle className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                          </button>
+                          {isPublic && (
+                            <button
+                              onClick={() => {
+                                const link = `${window.location.origin}?blobId=${fileItem.blobId}`;
+                                navigator.clipboard.writeText(link);
+                                setShareBlobId("link-" + fileItem.blobId);
+                                setTimeout(() => setShareBlobId(""), 2000);
+                              }}
+                              className="p-1.5 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
+                              title="Copy Link"
+                            >
+                              {shareBlobId === "link-" + fileItem.blobId ? <CheckCircle className="w-3 h-3" /> : <LinkIcon className="w-3 h-3" />}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-[10px] font-mono text-slate-500 break-all bg-slate-50 p-1 rounded">
+                        {fileItem.blobId}
+                      </p>
+                      <button
+                        onClick={() => {
+                          setBlobId(fileItem.blobId);
+                          setFiles([{ name: fileItem.name, type: fileItem.type } as File]);
+                          handleDownload();
+                        }}
+                        className="mt-2 w-full py-1.5 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center justify-center gap-1"
+                      >
+                        <Download className="w-3 h-3" /> Download
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => {
+                    setFiles([]);
+                    setUploadedBatch([]);
+                    setBlobId("");
+                    setCurrentStep(0);
+                    setStatus("");
+                    setUploadProgress(0);
+                  }}
+                  className="text-sm text-emerald-600 hover:text-emerald-800 underline mt-4"
+                >
+                  Upload More Files
+                </button>
               </div>
             )}
 
