@@ -126,6 +126,7 @@ export async function getFilesByRecipient(
             },
         });
 
+        // Map and sort by object version (higher version = more recent transfer)
         return data
             .filter(obj => obj.data?.content?.dataType === "moveObject")
             .map(obj => {
@@ -139,8 +140,12 @@ export async function getFilesByRecipient(
                     fileSize: parseInt(fields.file_size),
                     uploadedAt: parseInt(fields.uploaded_at),
                     isPublic: fields.is_public,
+                    // Store object version for sorting
+                    _objectVersion: parseInt(obj.data!.version || "0"),
                 };
-            });
+            })
+            // Sort by object version descending (most recent first)
+            .sort((a: any, b: any) => b._objectVersion - a._objectVersion);
     } catch (error) {
         console.error("Error fetching files by recipient:", error);
         return [];

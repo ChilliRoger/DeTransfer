@@ -80,7 +80,7 @@ function HomeContent() {
     if (!account) return;
     try {
       const files = await getFilesByUploaderViaEvents(client, account.address);
-      setUserFiles(files);
+      setUserFiles(files.sort((a, b) => b.uploadedAt - a.uploadedAt));
     } catch (e) {
       console.error("Failed to load files from blockchain", e);
     }
@@ -92,7 +92,7 @@ function HomeContent() {
     try {
       const normalizedAddress = normalizeSuiAddress(account.address);
       const files = await getFilesByRecipient(client, normalizedAddress);
-      setSharedFiles(files);
+      setSharedFiles(files); // Already sorted by object version in SDK
     } catch (e) {
       console.error("Failed to load shared files from blockchain", e);
     }
@@ -192,8 +192,8 @@ function HomeContent() {
 
       setBlobId(newBlobId);
 
-      // Save metadata on blockchain
-      setStatus("Storing metadata on blockchain...");
+      // Save metadata on blockchain - THIS IS REQUIRED
+      setStatus("⚠️ Please sign the transaction to store metadata on blockchain...");
       const tx = createRegisterFileTransaction(
         newBlobId,
         isPublic ? account.address : normalizeSuiAddress(recipientAddress),
@@ -202,10 +202,23 @@ function HomeContent() {
         file.size,
         isPublic
       );
-      await signAndExecute({ transaction: tx });
 
-      setCurrentStep(1);
-      setStatus(isPublic ? "Success! Public file stored on Walrus & Blockchain." : "Success! Encrypted file stored on Walrus & Blockchain.");
+      try {
+        await signAndExecute({ transaction: tx });
+        setCurrentStep(1);
+        setStatus(isPublic ? "Success! Public file stored on Walrus & Blockchain." : "Success! Encrypted file stored on Walrus & Blockchain.");
+      } catch (txError: any) {
+        // User rejected the transaction or it failed
+        console.error("Blockchain transaction failed:", txError);
+        setError(
+          "⚠️ File uploaded to Walrus but metadata NOT stored on blockchain. " +
+          "You rejected the transaction or it failed. " +
+          "The file exists at blob ID: " + newBlobId + " but won't appear in your history."
+        );
+        // Still set blobId so user can manually access it
+        setCurrentStep(1);
+        return;
+      }
     } catch (e: any) {
       console.error(e);
       setError(e.message || "Upload failed.");
@@ -509,7 +522,7 @@ function HomeContent() {
                         <div className="flex-1">
                           <p className="font-medium text-sm">{fileRecord.fileName}</p>
                           <p className="text-xs text-slate-500">
-                            From: {fileRecord.sender.slice(0, 8)}...{fileRecord.sender.slice(-6)} • {new Date(Number(fileRecord.uploadedAt)).toLocaleDateString()}
+                            From: {fileRecord.uploader.slice(0, 8)}...{fileRecord.uploader.slice(-6)} • {new Date(Number(fileRecord.uploadedAt)).toLocaleDateString()}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
