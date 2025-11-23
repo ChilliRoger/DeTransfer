@@ -59,7 +59,25 @@ function HomeContent() {
   const [accessBlobId, setAccessBlobId] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [remainingTime, setRemainingTime] = useState(0);
+
   const [isPublic, setIsPublic] = useState(false);
+  const [storageEpochs, setStorageEpochs] = useState(1);
+  const [durationValue, setDurationValue] = useState(1);
+  const [durationUnit, setDurationUnit] = useState("days");
+
+  // Calculate epochs when duration changes
+  useEffect(() => {
+    let epochs = 1;
+    const val = Math.max(1, Math.floor(durationValue)); // Ensure positive integer
+
+    switch (durationUnit) {
+      case "days": epochs = val; break;
+      case "weeks": epochs = val * 7; break;
+      case "months": epochs = val * 30; break;
+      case "years": epochs = val * 365; break;
+    }
+    setStorageEpochs(epochs);
+  }, [durationValue, durationUnit]);
 
   // Reset helper
   const reset = () => {
@@ -73,6 +91,9 @@ function HomeContent() {
     setUploadProgress(0);
     setRemainingTime(0);
     setIsPublic(false);
+    setIsPublic(false);
+    setDurationValue(1);
+    setDurationUnit("days");
   };
 
   // Load user files from blockchain (files uploaded by user)
@@ -180,7 +201,7 @@ function HomeContent() {
 
       // Upload directly to Walrus HTTP API
       const { uploadToWalrus } = await import('../lib/walrus/client');
-      const newBlobId = await uploadToWalrus(fileToUpload, (progress, timeRemaining) => {
+      const newBlobId = await uploadToWalrus(fileToUpload, storageEpochs, (progress, timeRemaining) => {
         setUploadProgress(progress);
         setRemainingTime(timeRemaining);
         if (progress === 100) {
@@ -199,7 +220,9 @@ function HomeContent() {
         isPublic ? account.address : normalizeSuiAddress(recipientAddress),
         file.name,
         file.type,
+
         file.size,
+        storageEpochs, // 🆕 Pass storage duration
         isPublic
       );
 
@@ -457,6 +480,11 @@ function HomeContent() {
                               <>To: {fileRecord.recipient.slice(0, 8)}...{fileRecord.recipient.slice(-6)}</>
                             )}
                             {' • '}{new Date(Number(fileRecord.uploadedAt)).toLocaleDateString()}
+                            {fileRecord.expiresAt > 0 && (
+                              <span className="ml-2 text-amber-600 text-[10px] bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
+                                Expires: {new Date(Number(fileRecord.expiresAt)).toLocaleDateString()}
+                              </span>
+                            )}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -507,6 +535,11 @@ function HomeContent() {
                           <p className="font-medium text-sm">{fileRecord.fileName}</p>
                           <p className="text-xs text-slate-500">
                             From: {fileRecord.uploader.slice(0, 8)}...{fileRecord.uploader.slice(-6)} • {new Date(Number(fileRecord.uploadedAt)).toLocaleDateString()}
+                            {fileRecord.expiresAt > 0 && (
+                              <span className="ml-2 text-amber-600 text-[10px] bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
+                                Expires: {new Date(Number(fileRecord.expiresAt)).toLocaleDateString()}
+                              </span>
+                            )}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -540,6 +573,39 @@ function HomeContent() {
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
                 className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-slate-200 rounded-lg p-2"
               />
+            </div>
+
+            {/* Storage Duration Selector */}
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700">Storage Duration</label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min="1"
+                  value={durationValue}
+                  onChange={(e) => setDurationValue(Number(e.target.value))}
+                  className="block w-24 text-sm border border-slate-200 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <select
+                  value={durationUnit}
+                  onChange={(e) => setDurationUnit(e.target.value)}
+                  className="block flex-1 text-sm border border-slate-200 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                >
+                  <option value="days">Days</option>
+                  <option value="weeks">Weeks</option>
+                  <option value="months">Months</option>
+                  <option value="years">Years</option>
+                </select>
+              </div>
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span className="flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" />
+                  Auto-deletes after period
+                </span>
+                <span className="font-mono bg-slate-100 px-2 py-0.5 rounded text-slate-600">
+                  {storageEpochs} Epochs
+                </span>
+              </div>
             </div>
 
             {/* Upload Type Toggle */}

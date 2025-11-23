@@ -8,7 +8,7 @@
  */
 
 // File Registry Package ID (deployed on testnet)
-export const FILE_REGISTRY_PACKAGE_ID = "0x8064b110b86088b9daf3677a8574276d8820cdf2480e19a104f56219626a9301";
+export const FILE_REGISTRY_PACKAGE_ID = "0xd6829acedddd2bae3602e16e4130c8e326562b49fd8d29a031362650114bd49f";
 
 export const FILE_REGISTRY_MODULE = "file_registry";
 

@@ -16,6 +16,8 @@ public struct FileRecord has key, store {
     file_type: String,           // MIME type (PUBLIC)
     file_size: u64,              // Size in bytes (PUBLIC)
     uploaded_at: u64,            // Timestamp (epoch)
+    expires_at: u64,             // 🆕 Epoch when file expires
+    storage_epochs: u64,         // 🆕 Number of epochs purchased
     is_public: bool,             // Whether file is public or encrypted
 }
 
@@ -27,6 +29,8 @@ public struct FileUploaded has copy, drop {
     recipient: address,
     file_name: String,
     uploaded_at: u64,
+    expires_at: u64,             // 🆕
+    storage_epochs: u64,         // 🆕
     is_public: bool,
 }
 
@@ -45,6 +49,7 @@ public struct FileDeleted has copy, drop {
 /// * `file_name` - Original filename
 /// * `file_type` - MIME type
 /// * `file_size` - File size in bytes
+/// * `storage_epochs` - Number of epochs to store the file
 /// * `is_public` - Whether file is public or encrypted
 /// * `ctx` - Transaction context
 #[allow(lint(public_entry))]
@@ -54,11 +59,13 @@ public entry fun register_file(
     file_name: String,
     file_type: String,
     file_size: u64,
+    storage_epochs: u64,
     is_public: bool,
     ctx: &mut TxContext
 ) {
     let uploader = ctx.sender();
     let uploaded_at = ctx.epoch();
+    let expires_at = uploaded_at + storage_epochs;
     
     // Create file record
     let record = FileRecord {
@@ -70,6 +77,8 @@ public entry fun register_file(
         file_type,
         file_size,
         uploaded_at,
+        expires_at,
+        storage_epochs,
         is_public,
     };
     
@@ -80,6 +89,8 @@ public entry fun register_file(
         recipient,
         file_name,
         uploaded_at,
+        expires_at,
+        storage_epochs,
         is_public,
     });
     
@@ -104,6 +115,8 @@ public entry fun delete_file(
         file_type: _,
         file_size: _,
         uploaded_at: _,
+        expires_at: _,
+        storage_epochs: _,
         is_public: _,
     } = record;
     
