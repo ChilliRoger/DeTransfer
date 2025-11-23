@@ -6,7 +6,9 @@ import { motion } from 'framer-motion';
 import { DeTransferLogo } from './Logos';
 const Footer: React.FC = () => {
   return (
-    <footer className="relative pt-32 pb-12 px-6 md:px-12 bg-black/20 overflow-hidden">
+    <footer className="relative pt-32 pb-12 px-6 md:px-12 bg-gradient-to-b from-[#050505] via-black/20 to-black/20 overflow-hidden">
+      {/* Top Transition Gradient */}
+      <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-[#050505] to-transparent pointer-events-none" />
       
       {/* Background Radial */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[1000px] h-[600px] bg-eco-accent/10 blur-[120px] rounded-full pointer-events-none" />

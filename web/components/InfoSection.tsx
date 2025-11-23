@@ -5,10 +5,97 @@ import { motion } from 'framer-motion';
 
 const InfoSection: React.FC = () => {
   return (
-    <section className="relative py-32 px-6 md:px-12 lg:px-24 bg-gradient-to-b from-transparent to-[#080808]/80">
-      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 lg:gap-32 items-start">
-        
-        {/* Left: Main Value Prop */}
+    <section className="relative py-24 md:py-32 px-6 md:px-12 lg:px-24 bg-gradient-to-b from-[#050505] via-[#080808]/60 to-[#050505] overflow-hidden">
+
+      {/* Top Transition Gradient */}
+      <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-[#050505] to-transparent pointer-events-none" />
+
+      {/* Blob Animation Background */}
+      <div className="absolute inset-0 pointer-events-none">
+
+        {/* Left Top Corner Blob */}
+        <motion.div 
+          className="absolute top-0 left-0 -translate-x-1/4 -translate-y-1/4 w-[350px] h-[350px] md:w-[520px] md:h-[520px]"
+        >
+
+          {/* Primary Blue Blob (lighter) */}
+          <motion.div 
+            className="absolute inset-0"
+            animate={{
+              rotate: 360,
+              scale: [1, 1.08, 0.96, 1.04, 1],
+              x: [0, 15, -12, 18, -10, 0],
+              y: [0, -15, 12, -18, 10, 0],
+            }}
+            transition={{
+              rotate: { duration: 90, ease: "linear", repeat: Infinity },
+              scale: { duration: 45, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              x: { duration: 55, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              y: { duration: 60, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+            }}
+          >
+            <div className="w-full h-full rounded-full 
+              bg-[conic-gradient(from_0deg,transparent_0deg,#2A70F1_80deg,transparent_200deg)] 
+              blur-[100px] md:blur-[150px] opacity-5 mix-blend-screen" 
+            />
+          </motion.div>
+
+          {/* Secondary Cyan Blob */}
+          <motion.div 
+            className="absolute inset-0"
+            animate={{
+              rotate: -360,
+              scale: [1, 0.96, 1.04, 0.98, 1],
+              x: [0, -12, 10, -15, 8, 0],
+              y: [0, 15, -10, 18, -12, 0],
+            }}
+            transition={{
+              rotate: { duration: 110, ease: "linear", repeat: Infinity },
+              scale: { duration: 50, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              x: { duration: 60, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              y: { duration: 65, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+            }}
+          >
+            <div className="w-full h-full rounded-full 
+              bg-[conic-gradient(from_180deg,transparent_0deg,#22d3ee_60deg,transparent_180deg)]
+              blur-[100px] md:blur-[140px] opacity-4 mix-blend-screen"
+            />
+          </motion.div>
+        </motion.div>
+
+        {/* Right Bottom Corner Blob */}
+        <motion.div 
+          className="absolute bottom-0 right-0 translate-x-1/4 translate-y-1/4 w-[350px] h-[350px] md:w-[520px] md:h-[520px]"
+        >
+          <motion.div 
+            className="absolute inset-0"
+            animate={{
+              rotate: 180,
+              scale: [1, 1.06, 0.97, 1.03, 1],
+              x: [0, -18, 15, -22, 12, 0],
+              y: [0, 18, -15, 22, -12, 0],
+            }}
+            transition={{
+              rotate: { duration: 85, ease: "linear", repeat: Infinity },
+              scale: { duration: 42, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              x: { duration: 52, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              y: { duration: 58, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+            }}
+          >
+            <div className="w-full h-full rounded-full 
+              bg-[radial-gradient(circle,#2A70F1_0%,transparent_75%)]
+              blur-[110px] md:blur-[160px] opacity-5 mix-blend-screen"
+            />
+          </motion.div>
+        </motion.div>
+
+      </div>
+
+
+      {/* CONTENT */}
+      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 lg:gap-32 items-start relative z-10">
+
+        {/* Left text */}
         <motion.div
           initial={{ opacity: 0, x: -20 }}
           whileInView={{ opacity: 1, x: 0 }}
@@ -17,14 +104,11 @@ const InfoSection: React.FC = () => {
         >
           <h2 className="text-4xl md:text-6xl font-sans font-normal text-white leading-tight">
             DeTransfer is a decentralized file-transfer network enabling 
-
             <span className="text-eco-accent/80"> secure, real-time, and private</span> movement of data across users.
           </h2>
         </motion.div>
 
-
- 
-        {/* Right: Detailed text */}
+        {/* Right text */}
         <div className="space-y-12 pt-4">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -48,15 +132,19 @@ const InfoSection: React.FC = () => {
             </p>
           </motion.div>
 
-           <motion.div
+          <motion.div
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
             viewport={{ once: true }}
             transition={{ delay: 0.6 }}
-            className="h-[1px] w-full bg-gradient-to-r from-gray-800 to-transparent mt-12"
+            className="h-[1px] w-full bg-gradient-to-r from-transparent via-white/5 to-transparent mt-12"
           />
         </div>
       </div>
+
+      {/* Gradients */}
+      <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-[#050505] to-transparent pointer-events-none" />
+      <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#050505] to-transparent pointer-events-none" />
     </section>
   );
 };

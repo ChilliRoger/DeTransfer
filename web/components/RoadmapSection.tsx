@@ -79,10 +79,54 @@ const RoadmapSection: React.FC = () => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   return (
-    <section className="relative py-32 px-6 md:px-12 lg:px-24 bg-[#050505] overflow-hidden">
+    <section id="roadmap" className="relative py-24 md:py-32 px-6 md:px-12 lg:px-24 bg-gradient-to-b from-[#050505] via-[#080808]/40 to-[#050505] overflow-hidden">
+      {/* Blob Animation Background - Right Side */}
+      <div className="absolute inset-0 pointer-events-none">
+        <motion.div 
+          className="absolute top-1/2 right-0 translate-x-1/4 -translate-y-1/2 w-[500px] h-[500px] md:w-[700px] md:h-[700px]"
+        >
+          {/* Primary Blue Blob */}
+          <motion.div 
+            className="absolute inset-0"
+            animate={{
+              rotate: 360,
+              scale: [1, 1.1, 0.95, 1.05, 1],
+              x: [0, 20, -15, 25, -10, 0],
+              y: [0, -20, 15, -25, 10, 0],
+            }}
+            transition={{
+              rotate: { duration: 80, ease: "linear", repeat: Infinity },
+              scale: { duration: 40, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              x: { duration: 50, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              y: { duration: 55, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+            }}
+          >
+            <div className="w-full h-full rounded-full bg-[conic-gradient(from_0deg,transparent_0deg,#2A70F1_120deg,transparent_240deg)] blur-[140px] md:blur-[180px] opacity-15 mix-blend-screen" />
+          </motion.div>
+
+          {/* Secondary Cyan Blob - Counter Movement */}
+          <motion.div 
+            className="absolute inset-0"
+            animate={{
+              rotate: -360,
+              scale: [1, 0.95, 1.05, 0.98, 1],
+              x: [0, -15, 12, -20, 8, 0],
+              y: [0, 18, -12, 22, -15, 0],
+            }}
+            transition={{
+              rotate: { duration: 100, ease: "linear", repeat: Infinity },
+              scale: { duration: 45, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              x: { duration: 55, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              y: { duration: 60, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+            }}
+          >
+            <div className="w-full h-full rounded-full bg-[conic-gradient(from_180deg,transparent_0deg,#22d3ee_90deg,transparent_210deg)] blur-[140px] md:blur-[170px] opacity-10 mix-blend-screen" />
+          </motion.div>
+        </motion.div>
+      </div>
       
       {/* Header */}
-      <div className="max-w-7xl mx-auto mb-24">
+      <div className="max-w-7xl mx-auto mb-24 relative z-10">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -99,7 +143,7 @@ const RoadmapSection: React.FC = () => {
       </div>
 
       {/* Roadmap List */}
-      <div className="max-w-7xl mx-auto relative">
+      <div className="max-w-7xl mx-auto relative z-10">
         
         {/* Desktop Horizontal Line */}
         <div className="absolute top-0 left-0 w-full h-[1px] bg-white/10 hidden md:block">
@@ -200,6 +244,12 @@ const RoadmapSection: React.FC = () => {
 
       {/* Decorative Background Gradients */}
       <div className="absolute bottom-0 right-0 w-1/3 h-1/3 bg-gradient-to-t from-eco-accent/5 to-transparent blur-3xl pointer-events-none" />
+
+      {/* Top Transition Gradient */}
+      <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-[#050505] to-transparent pointer-events-none" />
+      
+      {/* Bottom Transition Gradient */}
+      <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#050505] to-transparent pointer-events-none" />
     </section>
   );
 };

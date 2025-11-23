@@ -15,7 +15,7 @@ const Hero: React.FC = () => {
   const y = useTransform(scrollY, [0, 500], [0, 50]);
 
   return (
-    <section ref={containerRef} className="relative min-h-screen flex flex-col justify-center items-center text-center px-4 pt-20 overflow-hidden">
+    <section ref={containerRef} className="relative min-h-screen flex flex-col justify-center items-center text-center px-4 pt-32 pb-24 overflow-hidden">
       
       {/* Animated Hollow Globe Blob */}
       <motion.div 
@@ -135,6 +135,12 @@ const Hero: React.FC = () => {
         className="absolute bottom-10 left-1/2 -translate-x-1/2"
       >
       </motion.div>
+
+      {/* Bottom Transition Gradient */}
+      <div className="absolute bottom-0 left-0 right-0 h-48 bg-gradient-to-b from-transparent via-[#050505]/50 to-[#050505] pointer-events-none" />
+      
+      {/* Seamless InfoSection Transition */}
+      <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-b from-transparent to-[#080808]/60 pointer-events-none" />
     </section>
   );
 };

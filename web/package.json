@@ -14,7 +14,13 @@
     "next": "^15.1.0",
     "@google/genai": "^1.30.0",
     "lucide-react": "^0.554.0",
-    "framer-motion": "^12.23.24"
+    "framer-motion": "^12.23.24",
+    "@mysten/dapp-kit": "^0.19.9",
+    "@mysten/seal": "^0.9.4",
+    "@mysten/sui": "^1.45.0",
+    "@mysten/walrus": "^0.8.4",
+    "@tanstack/react-query": "^5.90.10",
+    "qrcode.react": "^4.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

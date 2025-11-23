@@ -28,7 +28,7 @@ const DemoSection: React.FC = () => {
   };
 
   return (
-    <section className="bg-[#050505] py-32 px-4 overflow-x-auto select-none border-t border-white/5 relative">
+    <section id="workflow" className="bg-gradient-to-b from-[#050505] via-[#050505] to-[#050505] py-24 md:py-32 pb-32 px-4 overflow-x-auto select-none relative">
       {/* Background Glow */}
       <div className="absolute top-0 left-1/4 w-1/3 h-full bg-eco-accent/5 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-1/3 h-full bg-blue-500/5 blur-[120px] pointer-events-none" />
@@ -328,6 +328,12 @@ const DemoSection: React.FC = () => {
 
         </svg>
       </div>
+
+      {/* Bottom Transition Gradient */}
+      <div className="absolute bottom-0 left-0 right-0 h-48 bg-gradient-to-b from-transparent via-[#050505]/50 to-[#050505] pointer-events-none" />
+      
+      {/* Seamless Footer Transition */}
+      <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-b from-transparent to-black/20 pointer-events-none" />
     </section>
   );
 };

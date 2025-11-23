@@ -4,10 +4,16 @@ import Navbar from '@/components/Navbar'
 import Footer from '@/components/Footer'
 import BackgroundEffect from '@/components/BackgroundEffect'
 import ChatWidget from '@/components/ChatWidget'
+import { Providers } from './Providers'
 
 export const metadata: Metadata = {
   title: 'DeTransfer - Zero-Knowledge File Sharing',
   description: 'Private, Decentralized and Trustless - Anonymous & Zero-Knowledge File Sharing',
+  icons: {
+    icon: '/favicon.svg',
+    shortcut: '/favicon.svg',
+    apple: '/favicon.svg',
+  },
 }
 
 export default function RootLayout({
@@ -18,11 +24,13 @@ export default function RootLayout({
   return (
     <html lang="en" className="scroll-smooth">
       <body className="relative min-h-screen text-white font-sans selection:bg-eco-accent/30 selection:text-white" suppressHydrationWarning>
-        <BackgroundEffect />
-        <Navbar />
-        <main>{children}</main>
-        <Footer />
-        <ChatWidget />
+        <Providers>
+          <BackgroundEffect />
+          <Navbar />
+          <main>{children}</main>
+          <Footer />
+          <ChatWidget />
+        </Providers>
       </body>
     </html>
   )
