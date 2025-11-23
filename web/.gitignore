@@ -8,6 +8,11 @@
 # testing
 /coverage
 
+#sdks
+ts-sdks/
+seal/
+walrus/
+
 # next.js
 /.next/
 /out/

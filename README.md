@@ -11,7 +11,7 @@
 
 **Secure • Decentralized • Verifiable**
 
-![DeTransfer - Zero-Knowledge & Trustless File Sharing](DeTransfer.png)
+![DeTransfer - Zero-Knowledge & Trustless File Sharing](web/DeTransfer.png)
 
 [Features](#key-features) • [Architecture](#architecture) • [Getting Started](#getting-started) • [Documentation](#documentation) • [Roadmap](#roadmap)
 
