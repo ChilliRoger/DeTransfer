@@ -64,9 +64,9 @@ const Footer: React.FC = () => {
         <div className="space-y-4">
           <h4 className="font-mono text-white text-sm mb-6">Socials</h4>
           <ul className="space-y-3 font-sans text-sm text-gray-400">
-            <li><a href="#" className="hover:text-white transition-colors">X</a></li>
+            <li><a href="https://x.com/detransfer_io" className="hover:text-white transition-colors">X</a></li>
             <li><a href="#" className="hover:text-white transition-colors">Discord</a></li>
-            <li><a href="#" className="hover:text-white transition-colors">YouTube</a></li>
+            <li><a href="https://www.youtube.com/watch?v=xZy0TVOBEq4" className="hover:text-white transition-colors">YouTube</a></li>
             <li><a href="#" className="hover:text-white transition-colors">LinkedIn</a></li>
             <li><a href="#" className="hover:text-white transition-colors">Facebook</a></li>
           </ul>
