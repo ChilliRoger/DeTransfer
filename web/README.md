@@ -39,13 +39,13 @@
 
 ## Overview
 
-**DeTransfer** is a next-generation decentralized file transfer protocol that combines the power of distributed storage, blockchain verification, and secure routing to provide censorship-resistant, verifiable, and trustless data delivery.
+**DeTransfer** is a fully decentralized file transfer application that combines the power of distributed storage, blockchain verification, and end-to-end encryption to provide censorship-resistant, verifiable, and trustless data delivery.
 
-Unlike traditional file-sharing services, DeTransfer eliminates single points of failure and central authority control by leveraging a three-layer architecture:
+Unlike traditional file-sharing services, DeTransfer eliminates single points of failure and central authority control by leveraging a client-side architecture:
 
 - **Storage Layer (Walrus)** - Decentralized storage with redundancy and high availability
-- **Verification Layer (Sui)** - Blockchain-based proofs, ownership, and state management
-- **Orchestration Layer (Seal)** - Routing, session management, and transfer coordination
+- **Verification Layer (Sui)** - Blockchain-based metadata storage, ownership, and state management
+- **Encryption Layer (Seal)** - Client-side end-to-end encryption SDK for recipient-only access
 
 ### Why DeTransfer?
 
@@ -62,66 +62,60 @@ Unlike traditional file-sharing services, DeTransfer eliminates single points of
 
 ### 1. **Secure Distributed Storage**
 DeTransfer leverages **Walrus** for decentralized storage, ensuring files are:
-- Chunked and encrypted before distribution
+- Stored directly on the Walrus network without intermediaries
 - Replicated across multiple independent nodes
 - Resistant to data loss and censorship
+- Configurable storage epochs (duration)
 - Available with high durability guarantees
 
-### 2. **Blockchain-Based Verification**
+### 2. **Blockchain-Based Metadata Registry**
 **Sui** blockchain provides:
-- Immutable proofs of upload and transfer
-- Smart contract-based access control
-- Ownership and permission management
+- Immutable on-chain file metadata (blob IDs, filenames, recipients)
+- Smart contract-based file registry
+- Ownership and recipient tracking
 - Transaction integrity and auditability
 - Gas-efficient Move language contracts
+- Event-based file history queries
 
-### 3. **Intelligent Routing & Orchestration**
-**Seal** manages:
-- Request routing and load balancing
-- Secure handshake protocols
-- Session token generation and validation
-- Recipient authorization workflows
-- Transfer status monitoring
-
-### 4. **End-to-End Encryption**
-Security by design:
-- Client-side encryption (AES-256-GCM)
+### 3. **End-to-End Encryption with Seal**
+**Seal SDK** provides:
+- Client-side encryption before upload
+- Recipient-only decryption access
+- Session key-based authorization
 - Zero-knowledge architecture
-- Only authorized recipients can decrypt
 - No intermediate access to plaintext data
+- Support for both public and private file sharing
 
-### 5. **Comprehensive Auditability**
-Every transfer generates:
-- Cryptographic hashes for integrity verification
-- On-chain metadata and timestamps
-- Transfer history and provenance trails
-- Verifiable delivery confirmations
+### 4. **User-Friendly Features**
+- **Batch File Upload** - Upload multiple files in a single transaction
+- **Public & Private Sharing** - Choose between encrypted private or public files
+- **Storage Duration Control** - Configure storage epochs for file retention
+- **QR Code Sharing** - Easy file sharing via QR codes
+- **Shared with Me** - View all files shared with your wallet
+- **Progress Tracking** - Real-time upload and download progress
+- **Wallet Integration** - Seamless Sui wallet connection via dApp Kit
 
 ---
 
 ## Architecture
 
-DeTransfer follows a modular, three-layer architecture designed for scalability, security, and decentralization:
+DeTransfer follows a client-side architecture designed for decentralization, security, and simplicity:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Client Application                      │
-│            (Web/Desktop/Mobile Interface)                   │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Seal Orchestration Layer                  │
-│  • Request Routing        • Session Management              │
-│  • Transfer Coordination  • Authorization Logic             │
+│                  Next.js Web Application                    │
+│  • React 19 UI Components                                   │
+│  • Seal SDK (Client-side Encryption)                        │
+│  • Walrus HTTP Client (Direct API Integration)              │
+│  • Sui dApp Kit (Wallet & Transaction Management)          │
 └──────────┬─────────────────────────────┬────────────────────┘
            │                             │
            ▼                             ▼
 ┌──────────────────────┐      ┌─────────────────────────────┐
 │   Walrus Storage     │      │    Sui Blockchain           │
-│  • Chunk Storage     │      │  • Smart Contracts          │
-│  • Replication       │      │  • Proof Verification       │
-│  • Retrieval         │      │  • State Management         │
+│  • Blob Storage      │      │  • File Registry Contract   │
+│  • HTTP API          │      │  • Metadata Storage          │
+│  • Epoch Management  │      │  • Event Queries             │
 └──────────────────────┘      └─────────────────────────────┘
 ```
 
@@ -129,10 +123,11 @@ DeTransfer follows a modular, three-layer architecture designed for scalability,
 
 | Component | Technology | Responsibility |
 |-----------|-----------|----------------|
-| **Client** | React/TypeScript | User interface, encryption, file handling |
-| **Seal** | Rust | Routing, orchestration, session management |
-| **Walrus** | Distributed Network | Decentralized file storage and retrieval |
-| **Sui** | Move Language | Smart contracts, proofs, state verification |
+| **Web App** | Next.js 15, React 19, TypeScript | User interface, file handling, encryption orchestration |
+| **Seal SDK** | @mysten/seal | Client-side end-to-end encryption and decryption |
+| **Walrus** | HTTP API | Decentralized file storage and retrieval |
+| **Sui** | Move Language, @mysten/sui | Smart contracts for file metadata registry |
+| **Wallet** | @mysten/dapp-kit | Wallet connection and transaction signing |
 
 ---
 
@@ -143,125 +138,95 @@ DeTransfer follows a modular, three-layer architecture designed for scalability,
 ```mermaid
 sequenceDiagram
     participant U as User (Sender)
-    participant C as Client App
-    participant S as Seal Router
+    participant C as Web App
+    participant S as Seal SDK
     participant W as Walrus Storage
     participant B as Sui Blockchain
     participant R as Recipient
 
-    Note over U,R: File Upload & Distribution Phase
-    U->>C: Select file to transfer
-    C->>C: Encrypt file (AES-256-GCM)
-    C->>C: Generate file chunks
-    C->>S: Request upload session
-    S->>S: Generate session token
-    S-->>C: Return session token
+    Note over U,R: File Upload Phase
+    U->>C: Select file(s) and recipient
+    U->>C: Choose public or private
     
-    loop For each chunk
-        C->>W: Upload encrypted chunk
-        W->>W: Replicate across nodes
-        W-->>C: Confirm chunk storage
+    alt Private File
+        C->>S: Encrypt file (Seal SDK)
+        S->>S: Generate encryption keys
+        S-->>C: Encrypted blob
     end
     
-    C->>B: Submit transfer proof
+    C->>W: Upload blob to Walrus (HTTP PUT)
+    W->>W: Store and replicate
+    W-->>C: Return blob ID
+    
+    C->>B: Register file metadata (Move call)
     B->>B: Execute smart contract
-    B->>B: Record metadata & hash
+    B->>B: Emit FileUploaded event
     B-->>C: Transaction confirmation
     
-    Note over U,R: Access Grant & Download Phase
-    U->>C: Grant access to recipient
-    C->>B: Update access permissions
-    B-->>C: Permission granted
+    Note over U,R: File Download Phase
+    R->>C: View "Shared with Me" (query Sui events)
+    C->>B: Query FileRecord objects
+    B-->>C: Return file metadata
     
-    R->>C: Request file access
-    C->>B: Verify recipient permissions
-    B-->>C: Access authorized
+    R->>C: Request file download
+    C->>W: Download blob (HTTP GET)
+    W-->>C: Return encrypted/blob
     
-    C->>S: Request download session
-    S-->>C: Session credentials
-    
-    loop For each chunk
-        C->>W: Retrieve encrypted chunk
-        W-->>C: Return chunk
+    alt Private File
+        C->>S: Create session key
+        C->>R: Request wallet signature
+        R->>C: Sign personal message
+        C->>B: Execute seal_approve transaction
+        C->>S: Decrypt blob
+        S-->>C: Decrypted file
     end
     
-    C->>C: Reconstruct file
-    C->>C: Decrypt file
-    C->>R: Deliver decrypted file
-    
-    C->>B: Confirm delivery
-    B->>B: Update transfer status
-    B-->>C: Status recorded
+    C->>R: Deliver file
 ```
 
 ### Key Workflow Steps
 
-1. **Encryption Phase**
-   - User selects file in client application
-   - File is encrypted client-side using AES-256-GCM
-   - Encryption key is derived from user credentials
-   - File is chunked for distributed storage
+1. **Upload Phase**
+   - User connects Sui wallet and selects file(s)
+   - For private files: File is encrypted client-side using Seal SDK
+   - Encrypted (or plain) file is uploaded directly to Walrus via HTTP API
+   - Walrus returns a blob ID
+   - File metadata (blob ID, recipient, filename, etc.) is registered on Sui blockchain
+   - Smart contract emits FileUploaded event
 
-2. **Upload Phase**
-   - Client requests upload session from Seal
-   - Seal generates and returns session token
-   - Each chunk is uploaded to Walrus network
-   - Walrus replicates chunks across nodes for redundancy
-
-3. **Verification Phase**
-   - Client submits transfer proof to Sui blockchain
-   - Smart contract validates and records metadata
-   - Cryptographic hash stored on-chain
-   - Transaction confirmation returned to client
-
-4. **Authorization Phase**
-   - Sender grants access permissions via smart contract
-   - Recipient identity verified on blockchain
-   - Access control list updated on Sui
-   - Permission events emitted for auditability
-
-5. **Download Phase**
-   - Recipient requests file through client
-   - Permissions verified against blockchain state
-   - Seal coordinates chunk retrieval from Walrus
-   - Chunks reconstructed and decrypted client-side
-
-6. **Confirmation Phase**
-   - Delivery confirmation submitted to blockchain
-   - Transfer status updated in smart contract
-   - Audit trail completed with timestamps
-   - Both parties notified of successful transfer
+2. **Download Phase**
+   - Recipient views "Shared with Me" by querying Sui blockchain events
+   - File metadata is retrieved from on-chain FileRecord objects
+   - Encrypted blob is downloaded directly from Walrus aggregator
+   - For private files: Recipient creates session key, signs with wallet, executes seal_approve transaction
+   - File is decrypted client-side using Seal SDK
+   - Decrypted file is delivered to recipient
 
 ---
 
 ## Technology Stack
 
 ### Frontend
-- **React 18+** - Modern UI framework
+- **Next.js 15** - React framework with App Router
+- **React 19** - Modern UI library
 - **TypeScript** - Type-safe development
-- **Vite** - Fast build tool and dev server
-- **TailwindCSS** - Utility-first styling
-- **Web3.js/Ethers.js** - Blockchain interaction
+- **Tailwind CSS** - Utility-first styling
+- **Framer Motion** - Animation library
 
-### Backend
-- **Rust** - High-performance systems language
-- **Actix-web** - Async web framework
-- **Tokio** - Asynchronous runtime
-- **SeaORM** - Database ORM
-
-### Blockchain
-- **Sui** - Layer 1 blockchain platform
+### Blockchain & Wallet
+- **Sui** - Layer 1 blockchain platform (Testnet)
 - **Move Language** - Smart contract development
-- **Sui SDK** - Blockchain integration
+- **@mysten/sui** - Sui TypeScript SDK
+- **@mysten/dapp-kit** - Wallet adapter and transaction management
+- **@mysten/seal** - End-to-end encryption SDK
 
 ### Storage
-- **Walrus** - Decentralized storage network
-- **IPFS** - Content-addressed storage (optional)
+- **Walrus** - Decentralized storage network (Testnet)
+- **@mysten/walrus** - Walrus TypeScript SDK (optional, using direct HTTP API)
 
-### Security
-- **AES-256-GCM** - Encryption algorithm
-- **SHA-3** - Cryptographic hashing
-- **Ed25519** - Digital signatures
+### Development Tools
+- **Node.js** - Runtime environment
+- **npm** - Package manager
 
 ---
 
@@ -272,10 +237,8 @@ sequenceDiagram
 Ensure you have the following installed:
 
 - **Node.js** (v18.0.0 or higher)
-- **npm** or **yarn** package manager
-- **Rust** (v1.70.0 or higher)
-- **Sui CLI** ([Installation Guide](https://docs.sui.io/build/install))
-- **Walrus Client** ([Setup Instructions](https://walrus.site))
+- **npm** package manager
+- **Sui Wallet** browser extension ([Installation Guide](https://docs.sui.io/guides/developer/getting-started/get-wallet))
 - **Git** version control
 
 ### Installation
@@ -286,199 +249,124 @@ git clone https://github.com/anbusan19/DeTransfer.git
 cd DeTransfer
 ```
 
-2. **Install client dependencies**
+2. **Install dependencies**
 ```bash
-cd client
+cd web
 npm install
-# or
-yarn install
 ```
 
-3. **Install Seal backend dependencies**
-```bash
-cd ../seal
-cargo build --release
-```
-
-4. **Configure environment variables**
-```bash
-# Client (.env)
-cp client/.env.example client/.env
-
-# Seal (.env)
-cp seal/.env.example seal/.env
-```
-
-Edit the `.env` files with your configuration:
+3. **Configure environment variables (optional)**
+The application uses default testnet configurations. If needed, create a `.env.local` file:
 ```env
-# Client environment
-VITE_SUI_NETWORK=testnet
-VITE_WALRUS_ENDPOINT=https://walrus-testnet.example.com
-VITE_SEAL_API=http://localhost:8080
-
-# Seal environment
-SEAL_PORT=8080
-SUI_RPC_URL=https://fullnode.testnet.sui.io:443
-WALRUS_API_KEY=your_api_key_here
+# Optional: Override default Sui network
+NEXT_PUBLIC_SUI_NETWORK=testnet
 ```
 
 ### Running the Application
 
-#### 1. Start the Seal Backend
+1. **Start the development server**
 ```bash
-cd seal
-cargo run --release
-```
-
-#### 2. Deploy Sui Smart Contracts
-```bash
-cd contracts
-sui move build
-sui client publish --gas-budget 100000000
-```
-
-Save the package ID from deployment output.
-
-#### 3. Start the Client Application
-```bash
-cd client
+cd web
 npm run dev
-# or
-yarn dev
 ```
 
-The application will be available at `http://localhost:5173`
+2. **Open your browser**
+Navigate to `http://localhost:3000`
 
-### Docker Setup (Alternative)
+3. **Connect your wallet**
+- Install the Sui Wallet browser extension
+- Click "Connect Wallet" in the application
+- Approve the connection
 
-```bash
-# Build and run with Docker Compose
-docker-compose up -d
+### Smart Contract Configuration
 
-# View logs
-docker-compose logs -f
+The application uses a pre-deployed file registry contract on Sui Testnet:
+- **Package ID**: `0xd6829acedddd2bae3602e16e4130c8e326562b49fd8d29a031362650114bd49f`
+- **Module**: `file_registry`
 
-# Stop services
-docker-compose down
-```
+To deploy your own contract or update the configuration, edit `web/app/lib/sui/config.ts`.
 
 ---
 
 ## Usage
 
-### Upload a File
+### Upload Files
 
-```typescript
-import { DeTransferClient } from '@detransfer/sdk';
+1. **Navigate to Upload Page**
+   - Click "Upload" in the navigation or visit `/upload`
 
-const client = new DeTransferClient({
-  sealEndpoint: 'http://localhost:8080',
-  suiNetwork: 'testnet',
-  walrusEndpoint: 'https://walrus-testnet.example.com'
-});
+2. **Connect Wallet**
+   - Click "Connect Wallet" and approve the connection
 
-// Upload file
-const result = await client.upload({
-  file: fileBlob,
-  recipients: ['0x1234...', '0x5678...'],
-  expiresAt: Date.now() + 86400000, // 24 hours
-  encryption: 'AES-256-GCM'
-});
+3. **Select Files**
+   - Click to select one or multiple files
+   - Files are processed in batch
 
-console.log('File ID:', result.fileId);
-console.log('Transaction:', result.txHash);
-```
+4. **Configure Upload**
+   - **Private Files**: Enter recipient wallet address (or use your own)
+   - **Public Files**: Toggle "Public File" - no encryption, accessible by blob ID
+   - **Storage Duration**: Set epochs (1 epoch ≈ 1 day on testnet)
 
-### Download a File
+5. **Upload**
+   - Click "Upload Files"
+   - Sign the transaction when prompted
+   - Wait for upload and blockchain confirmation
 
-```typescript
-// Download file
-const file = await client.download({
-  fileId: 'abc123...',
-  recipient: '0x1234...'
-});
+### Download Files
 
-// Save to disk
-const blob = new Blob([file.data]);
-saveAs(blob, file.metadata.filename);
-```
+1. **View Shared Files**
+   - Navigate to "Receive" page or visit `/receive`
+   - View all files shared with your wallet address
 
-### Grant Access
+2. **Download**
+   - Click "Download" on any file
+   - For private files: Sign the session key message and approve the `seal_approve` transaction
+   - File will be decrypted and downloaded automatically
 
-```typescript
-// Grant access to new recipient
-await client.grantAccess({
-  fileId: 'abc123...',
-  recipient: '0x9abc...',
-  permissions: ['read', 'download']
-});
-```
+### Share Files
 
-### Verify Transfer
-
-```typescript
-// Verify file integrity
-const verification = await client.verify({
-  fileId: 'abc123...',
-  expectedHash: 'sha3-256-hash...'
-});
-
-console.log('Verified:', verification.isValid);
-console.log('On-chain proof:', verification.proofTx);
-```
+- **QR Code**: Generate QR code with blob ID for easy sharing
+- **Copy Blob ID**: Copy the blob ID to share manually
+- **Direct Link**: Use the blob ID in the URL: `/receive?blobId=<blob-id>`
 
 ---
 
 ## Smart Contracts
 
-### Core Contracts
+### File Registry Contract
 
-#### FileTransfer.move
-Main contract managing file transfers and permissions.
+The file registry contract stores file metadata on-chain, including:
+- Blob ID (Walrus storage identifier)
+- Uploader address
+- Recipient address
+- File name and type
+- File size
+- Upload timestamp
+- Expiration epoch
+- Storage epochs
+- Public/private flag
 
-```move
-module detransfer::file_transfer {
-    use sui::object::{Self, UID};
-    use sui::transfer;
-    use sui::tx_context::{Self, TxContext};
-    
-    struct FileMetadata has key, store {
-        id: UID,
-        owner: address,
-        file_hash: vector<u8>,
-        chunk_count: u64,
-        recipients: vector<address>,
-        created_at: u64,
-        expires_at: u64
-    }
-    
-    public entry fun create_transfer(
-        file_hash: vector<u8>,
-        chunk_count: u64,
-        recipients: vector<address>,
-        expires_at: u64,
-        ctx: &mut TxContext
-    ) {
-        // Implementation
-    }
-}
-```
+#### Contract Details
 
-### Contract Deployment
+- **Package ID**: `0xd6829acedddd2bae3602e16e4130c8e326562b49fd8d29a031362650114bd49f`
+- **Module**: `file_registry`
+- **Network**: Sui Testnet
 
-```bash
-# Build contracts
-sui move build
+#### Key Functions
 
-# Run tests
-sui move test
+- `register_file` - Register a new file with metadata
+- `FileUploaded` event - Emitted when a file is registered
 
-# Deploy to testnet
-sui client publish --gas-budget 100000000
+#### Contract Location
 
-# Deploy to mainnet
-sui client publish --gas-budget 100000000 --network mainnet
-```
+The Move source code for the file registry contract is located in the `walrus/move/file_registry/` directory.
+
+### Seal Access Policy
+
+The application uses Seal's `simple_recipient` access policy for encryption:
+- **Package ID**: `0xd1d471dd362206f61194c711d9dfcd1f8fd2d3e44df102efc15fa07332996247`
+- **Module**: `simple_recipient`
+- **Function**: `seal_approve` - Authorizes recipient to decrypt files
 
 ---
 
@@ -508,20 +396,21 @@ sui client publish --gas-budget 100000000 --network mainnet
 
 ### Security Measures
 
-- **Client-Side Encryption** - All files encrypted before leaving user's device
-- **Key Management** - Hierarchical deterministic key derivation
-- **Zero-Knowledge Architecture** - No intermediate access to plaintext
-- **Cryptographic Proofs** - SHA-3 hashing and Ed25519 signatures
-- **Smart Contract Audits** - Regular security reviews and audits
-- **Rate Limiting** - DDoS protection and abuse prevention
+- **Client-Side Encryption** - Private files encrypted using Seal SDK before upload
+- **Recipient-Only Access** - Only the specified recipient wallet can decrypt private files
+- **Zero-Knowledge Architecture** - No intermediate access to plaintext data
+- **On-Chain Metadata** - File metadata stored immutably on Sui blockchain
+- **Wallet-Based Authentication** - All transactions require wallet signatures
+- **Session Key Authorization** - Decryption requires wallet-signed session keys
 
 ### Security Best Practices
 
-1. **Never share your private keys**
-2. **Verify recipient addresses before granting access**
-3. **Use strong, unique passwords for encryption**
-4. **Regularly update client software**
-5. **Monitor transfer activity on blockchain explorers**
+1. **Never share your wallet private keys or seed phrases**
+2. **Verify recipient addresses before uploading files**
+3. **Use private mode for sensitive files** - Public files are unencrypted
+4. **Verify blob IDs when sharing** - Ensure you're sharing the correct file
+5. **Monitor your wallet activity** - Check transactions on Sui explorers
+6. **Keep your wallet extension updated**
 
 ### Vulnerability Reporting
 
@@ -538,6 +427,10 @@ Found a security issue? Please report it responsibly:
 - [x] Core protocol development
 - [x] Sui smart contracts deployment
 - [x] Walrus integration
+- [x] Seal encryption integration
+- [x] Web application (Next.js)
+- [x] Batch file upload
+- [x] Public and private file sharing
 - [ ] Public testnet launch
 - [ ] Security audit completion
 
@@ -588,8 +481,9 @@ We welcome contributions from the community! Here's how you can help:
 
 ### Coding Standards
 
-- Follow Rust style guidelines (rustfmt)
-- Use ESLint and Prettier for TypeScript/React
+- Use TypeScript for type safety
+- Follow Next.js and React best practices
+- Use ESLint and Prettier for code formatting
 - Write comprehensive tests for new features
 - Update documentation for API changes
 - Maintain backward compatibility when possible

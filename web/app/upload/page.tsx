@@ -1161,7 +1161,7 @@ function UploadContent() {
                             <button
                               onClick={() => {
                                 const blobIds = uploadedBatch.map(f => f.blobId).join(',');
-                                const link = `${window.location.origin}?blobIds=${blobIds}`;
+                                const link = `${window.location.origin}/download?blobIds=${blobIds}`;
                                 navigator.clipboard.writeText(link);
                                 setShareBlobId("batch-link");
                                 setTimeout(() => setShareBlobId(""), 2000);
@@ -1201,7 +1201,7 @@ function UploadContent() {
                     >
                       {uploadedBatch.map((fileItem, idx) => (
                         <div key={fileItem.blobId} className="bg-white/5 p-4 rounded-xl border border-white/10">
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center justify-between gap-3 mb-2">
                             <div className="flex-1 min-w-0">
                               <p className="text-xs font-mono text-eco-accent break-all select-all leading-relaxed">
                                 {fileItem.blobId}
@@ -1222,19 +1222,43 @@ function UploadContent() {
                               {isPublic && (
                                 <button
                                   onClick={() => {
-                                    const link = `${window.location.origin}?blobId=${fileItem.blobId}`;
+                                    const link = `${window.location.origin}/download?blobId=${fileItem.blobId}`;
                                     navigator.clipboard.writeText(link);
                                     setShareBlobId("link-" + fileItem.blobId);
                                     setTimeout(() => setShareBlobId(""), 2000);
                                   }}
                                   className="p-1.5 text-xs bg-eco-accent/10 text-eco-accent rounded-lg hover:bg-eco-accent/20 transition-all"
-                                  title="Copy Link"
+                                  title="Copy Download Link"
                                 >
                                   {shareBlobId === "link-" + fileItem.blobId ? <CheckCircle className="w-3 h-3" /> : <LinkIcon className="w-3 h-3" />}
                                 </button>
                               )}
                             </div>
                           </div>
+                          {isPublic && (
+                            <div className="mt-2 pt-2 border-t border-white/5">
+                              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider font-mono mb-1">
+                                Download Link
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <p className="text-[10px] font-mono text-gray-500 break-all select-all flex-1">
+                                  {typeof window !== 'undefined' ? `${window.location.origin}/download?blobId=${fileItem.blobId}` : `.../download?blobId=${fileItem.blobId}`}
+                                </p>
+                                <button
+                                  onClick={() => {
+                                    const link = `${window.location.origin}/download?blobId=${fileItem.blobId}`;
+                                    navigator.clipboard.writeText(link);
+                                    setShareBlobId("download-link-" + fileItem.blobId);
+                                    setTimeout(() => setShareBlobId(""), 2000);
+                                  }}
+                                  className="p-1 text-[10px] bg-eco-accent/10 text-eco-accent rounded hover:bg-eco-accent/20 transition-all flex-shrink-0"
+                                  title="Copy Download Link"
+                                >
+                                  {shareBlobId === "download-link-" + fileItem.blobId ? <CheckCircle className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </motion.div>
@@ -1284,6 +1308,42 @@ function UploadContent() {
                             {blobId}
                           </p>
                         </div>
+                        {isPublic && (
+                          <div className="mt-4 pt-4 border-t border-white/10">
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-mono">
+                                Download Link
+                              </p>
+                              <button
+                                onClick={() => {
+                                  const link = `${window.location.origin}/download?blobId=${blobId}`;
+                                  navigator.clipboard.writeText(link);
+                                  setShareBlobId("download-link-" + blobId);
+                                  setTimeout(() => setShareBlobId(""), 2000);
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-eco-accent/10 text-eco-accent rounded-lg hover:bg-eco-accent/20 border border-eco-accent/20 transition-all font-medium"
+                                title="Copy Download Link"
+                              >
+                                {shareBlobId === "download-link-" + blobId ? (
+                                  <>
+                                    <CheckCircle className="w-3.5 h-3.5" />
+                                    <span>Copied</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span>Copy</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                              <p className="text-xs font-mono text-eco-accent break-all select-all leading-relaxed">
+                                {typeof window !== 'undefined' ? `${window.location.origin}/download?blobId=${blobId}` : `.../download?blobId=${blobId}`}
+                              </p>
+                            </div>
+                          </div>
+                        )}
                       </motion.div>
 
                       {/* Share Link & QR Code (For Public Files) */}
@@ -1303,7 +1363,7 @@ function UploadContent() {
                             </div>
                             <button
                               onClick={() => {
-                                const link = `${window.location.origin}?blobId=${blobId}`;
+                                const link = `${window.location.origin}/download?blobId=${blobId}`;
                                 navigator.clipboard.writeText(link);
                                 setShareBlobId("link-" + blobId);
                                 setTimeout(() => setShareBlobId(""), 2000);
@@ -1327,7 +1387,7 @@ function UploadContent() {
                           
                           <div className="bg-white/5 rounded-xl p-4 border border-white/10">
                             <p className="text-xs font-mono text-eco-accent break-all select-all leading-relaxed">
-                              {typeof window !== 'undefined' ? `${window.location.origin}?blobId=${blobId}` : `.../?blobId=${blobId}`}
+                              {typeof window !== 'undefined' ? `${window.location.origin}/download?blobId=${blobId}` : `.../download?blobId=${blobId}`}
                             </p>
                           </div>
 
@@ -1340,7 +1400,7 @@ function UploadContent() {
                             </div>
                             <div className="bg-white/5 p-4 rounded-xl border border-white/10">
                               <QRCodeSVG
-                                value={typeof window !== 'undefined' ? `${window.location.origin}?blobId=${blobId}` : blobId}
+                                value={typeof window !== 'undefined' ? `${window.location.origin}/download?blobId=${blobId}` : blobId}
                                 size={180}
                                 level={"M"}
                                 bgColor="transparent"
