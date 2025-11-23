@@ -441,15 +441,6 @@ function HomeContent() {
               <>
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-semibold">My Uploads</h2>
-                  {userFiles.length > 0 && (
-                    <button
-                      onClick={handleClearAllFiles}
-                      className="text-xs px-3 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 flex items-center gap-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Clear All
-                    </button>
-                  )}
                 </div>
                 {userFiles.length === 0 ? (
                   <p className="text-slate-500 text-center py-8">No files uploaded yet</p>
@@ -494,13 +485,6 @@ function HomeContent() {
                             className="text-xs px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
                           >
                             Download
-                          </button>
-                          <button
-                            onClick={() => handleDeleteFile(fileRecord.blobId)}
-                            className="p-1.5 bg-red-50 text-red-600 rounded hover:bg-red-100"
-                            title="Delete file"
-                          >
-                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
