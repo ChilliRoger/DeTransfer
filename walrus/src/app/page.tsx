@@ -614,7 +614,7 @@ function HomeContent() {
                               setBlobId(fileRecord.blobId);
                               setFiles([{ name: fileRecord.fileName, type: fileRecord.fileType } as File]);
                               setRecipientAddress(fileRecord.recipient || account?.address || "");
-                              handleDownload();
+                              setTimeout(() => handleDownload(), 0);
                             }}
                             className="text-xs px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
                           >
@@ -657,7 +657,7 @@ function HomeContent() {
                               setBlobId(fileRecord.blobId);
                               setFiles([{ name: fileRecord.fileName, type: fileRecord.fileType } as File]);
                               setRecipientAddress(fileRecord.recipient);
-                              handleDownload();
+                              setTimeout(() => handleDownload(), 0);
                             }}
                             className="text-xs px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
                           >
@@ -945,9 +945,12 @@ function HomeContent() {
                         {fileItem.blobId}
                       </p>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
+                          // Set state for this specific file
                           setBlobId(fileItem.blobId);
                           setFiles([{ name: fileItem.name, type: fileItem.type } as File]);
+                          // Use Promise to ensure state updates propagate
+                          await new Promise(resolve => setTimeout(resolve, 10));
                           handleDownload();
                         }}
                         className="mt-2 w-full py-1.5 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center justify-center gap-1"
