@@ -59,11 +59,54 @@ function HomeContent() {
   const [accessBlobId, setAccessBlobId] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [remainingTime, setRemainingTime] = useState(0);
+  const [isExpired, setIsExpired] = useState(false);
 
   const [isPublic, setIsPublic] = useState(false);
   const [storageEpochs, setStorageEpochs] = useState(1);
   const [durationValue, setDurationValue] = useState(1);
   const [durationUnit, setDurationUnit] = useState("days");
+  const [currentEpoch, setCurrentEpoch] = useState<number>(0);
+
+  // Fetch current epoch on mount
+  useEffect(() => {
+    const fetchEpoch = async () => {
+      try {
+        const state = await client.getLatestSuiSystemState();
+        setCurrentEpoch(Number(state.epoch));
+      } catch (e) {
+        console.error("Failed to fetch current epoch", e);
+      }
+    };
+    fetchEpoch();
+  }, []);
+
+  // Helper to convert epoch to date (approximate)
+  const getEpochDate = (epoch: number) => {
+    if (!epoch || !currentEpoch) return new Date(); // Fallback to now
+    // Calculate difference in epochs
+    const diff = epoch - currentEpoch;
+    // Add difference in days (assuming 1 epoch = 1 day on testnet)
+    const date = new Date();
+    date.setDate(date.getDate() + diff);
+    return date;
+  };
+
+  // Helper to format expiration time
+  const getExpirationText = (expiresAt: number) => {
+    if (!expiresAt || expiresAt === 0) return null;
+    if (!currentEpoch) return "Loading expiration...";
+
+    const remainingEpochs = expiresAt - currentEpoch;
+    if (remainingEpochs <= 0) return "Expired";
+
+    // Testnet: 1 Epoch = 1 Day
+    // Mainnet: 1 Epoch = 14 Days (approx)
+    // We assume Testnet for now as per config
+    const daysRemaining = remainingEpochs;
+
+    if (daysRemaining === 1) return "Expires in 1 day";
+    return `Expires in ${daysRemaining} days`;
+  };
 
   // Calculate epochs when duration changes
   useEffect(() => {
@@ -91,7 +134,7 @@ function HomeContent() {
     setUploadProgress(0);
     setRemainingTime(0);
     setIsPublic(false);
-    setIsPublic(false);
+    setIsExpired(false);
     setDurationValue(1);
     setDurationUnit("days");
   };
@@ -251,6 +294,11 @@ function HomeContent() {
   // ----- Download Handler -----
   const handleDownload = async () => {
     if (!blobId) return;
+    if (isExpired) {
+      setError("Cannot download: This file has expired.");
+      return;
+    }
+
     try {
       setIsDownloading(true);
       setStatus("Fetching file from Walrus...");
@@ -479,10 +527,13 @@ function HomeContent() {
                             ) : (
                               <>To: {fileRecord.recipient.slice(0, 8)}...{fileRecord.recipient.slice(-6)}</>
                             )}
-                            {' • '}{new Date(Number(fileRecord.uploadedAt)).toLocaleDateString()}
+                            {' • '}{getEpochDate(fileRecord.uploadedAt).toLocaleDateString()}
                             {fileRecord.expiresAt > 0 && (
-                              <span className="ml-2 text-amber-600 text-[10px] bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
-                                Expires: {new Date(Number(fileRecord.expiresAt)).toLocaleDateString()}
+                              <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded border ${(fileRecord.expiresAt - currentEpoch) <= 3
+                                ? "text-red-600 bg-red-50 border-red-100"
+                                : "text-amber-600 bg-amber-50 border-amber-100"
+                                }`}>
+                                {getExpirationText(fileRecord.expiresAt)}
                               </span>
                             )}
                           </p>
@@ -534,10 +585,13 @@ function HomeContent() {
                         <div className="flex-1">
                           <p className="font-medium text-sm">{fileRecord.fileName}</p>
                           <p className="text-xs text-slate-500">
-                            From: {fileRecord.uploader.slice(0, 8)}...{fileRecord.uploader.slice(-6)} • {new Date(Number(fileRecord.uploadedAt)).toLocaleDateString()}
+                            From: {fileRecord.uploader.slice(0, 8)}...{fileRecord.uploader.slice(-6)} • {getEpochDate(fileRecord.uploadedAt).toLocaleDateString()}
                             {fileRecord.expiresAt > 0 && (
-                              <span className="ml-2 text-amber-600 text-[10px] bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
-                                Expires: {new Date(Number(fileRecord.expiresAt)).toLocaleDateString()}
+                              <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded border ${(fileRecord.expiresAt - currentEpoch) <= 3
+                                ? "text-red-600 bg-red-50 border-red-100"
+                                : "text-amber-600 bg-amber-50 border-amber-100"
+                                }`}>
+                                {getExpirationText(fileRecord.expiresAt)}
                               </span>
                             )}
                           </p>
@@ -807,36 +861,49 @@ function HomeContent() {
                   </div>
                 )}
 
-                <div className="flex gap-3 justify-center pt-2">
-                  <button
-                    onClick={handleDownload}
-                    disabled={isDownloading}
-                    className="flex items-center gap-2 text-sm font-medium text-white bg-emerald-600 px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-70"
-                  >
-                    {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                    {isPublic ? 'Download File' : 'Decrypt & Download'}
-                  </button>
-                  <button
-                    onClick={reset}
-                    className="text-sm font-medium text-emerald-700 bg-emerald-100 px-4 py-2 rounded-lg hover:bg-emerald-200 transition-colors"
-                  >
-                    New Upload
-                  </button>
-                </div>
               </div>
             )}
 
-            {/* Footer Status */}
-            <div className="text-center border-t border-slate-100 pt-4">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">System Status</span>
-              <p className="text-sm font-mono text-slate-600 mt-1">{status}</p>
-            </div>
+            {/* Expiration Warning for Download View */}
+            {blobId && !showHistory && (
+              <div className="mt-4 text-center">
+                {/* We need to fetch metadata if not available, but for now we rely on what we have */}
+                {/* Ideally we would pass the expiration from the URL or fetch it */}
+              </div>
+            )}
+
+            {blobId && (
+              <div className="flex gap-3 justify-center pt-2">
+                <button
+                  onClick={handleDownload}
+                  disabled={isDownloading || isExpired}
+                  className={`flex items-center gap-2 text-sm font-medium text-white px-4 py-2 rounded-lg transition-colors shadow-sm disabled:opacity-70 ${isExpired ? "bg-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700"
+                    }`}
+                >
+                  {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  {isExpired ? 'File Expired' : (isPublic ? 'Download File' : 'Decrypt & Download')}
+                </button>
+                <button
+                  onClick={reset}
+                  className="text-sm font-medium text-emerald-700 bg-emerald-100 px-4 py-2 rounded-lg hover:bg-emerald-200 transition-colors"
+                >
+                  New Upload
+                </button>
+              </div>
+            )}
           </div>
         )}
+
+        {/* Footer Status */}
+        <div className="text-center border-t border-slate-100 pt-4">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">System Status</span>
+          <p className="text-sm font-mono text-slate-600 mt-1">{status}</p>
+        </div>
       </div>
     </main>
   );
 }
+
 
 export default function WalrusPage() {
   return (

@@ -1,7 +1,7 @@
 "use client";
 
 import { SealClient } from "@mysten/seal";
-import { walrusClient } from "../walrus/client";
+import { walrusClient } from "@/lib/walrus/client";
 
 /**
  * Seal package configuration for testnet
