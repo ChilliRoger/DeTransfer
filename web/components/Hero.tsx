@@ -17,13 +17,13 @@ const Hero: React.FC = () => {
   return (
     <section ref={containerRef} className="relative min-h-screen flex flex-col justify-center items-center text-center px-4 pt-32 pb-24 overflow-hidden">
       
-      {/* Animated Hollow Globe Blob */}
+      {/* Animated Hollow Globe Blob - Optimized */}
       <motion.div 
         style={{ scale, opacity }}
         className="absolute inset-0 m-auto w-[600px] h-[600px] md:w-[900px] md:h-[900px] pointer-events-none z-0"
       >
         <motion.div 
-          className="w-full h-full relative"
+          className="w-full h-full relative will-change-transform"
           animate={{ 
             rotate: 360,
             scale: [1, 1.05, 0.95, 1]
@@ -33,45 +33,40 @@ const Hero: React.FC = () => {
             scale: { duration: 15, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" }
           }}
         >
-           {/* Globe Atmosphere (Faint Glow) */}
-           <div className="absolute inset-0 rounded-full bg-eco-accent/5 blur-[100px]" />
+           {/* Globe Atmosphere (Faint Glow) - Reduced blur */}
+           <div className="absolute inset-0 rounded-full bg-eco-accent/5 blur-[60px] md:blur-[80px] will-change-transform" />
 
-           {/* Organic Inner Layer 1 */}
+           {/* Organic Inner Layer 1 - Simplified animation */}
            <motion.div 
-              className="absolute inset-[10%] rounded-[40%_60%_70%_30%/40%_50%_60%_50%] bg-gradient-to-tr from-eco-accent/10 via-eco-accent/5 to-transparent blur-[60px]"
+              className="absolute inset-[10%] rounded-[40%_60%_70%_30%/40%_50%_60%_50%] bg-gradient-to-tr from-eco-accent/10 via-eco-accent/5 to-transparent blur-[40px] md:blur-[50px] will-change-transform"
               animate={{ 
-                 borderRadius: ["40% 60% 70% 30% / 40% 50% 60% 50%", "60% 40% 30% 70% / 60% 30% 70% 40%", "40% 60% 70% 30% / 40% 50% 60% 50%"],
                  rotate: 180 
               }}
               transition={{
-                borderRadius: { duration: 20, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" },
                 rotate: { duration: 40, repeat: Infinity, ease: "linear" }
               }}
            />
 
-           {/* Organic Inner Layer 2 */}
+           {/* Organic Inner Layer 2 - Simplified animation */}
            <motion.div 
-              className="absolute inset-[10%] rounded-[60%_40%_30%_70%/60%_30%_70%_40%] bg-gradient-to-bl from-white/5 via-white/5 to-transparent blur-[50px]"
+              className="absolute inset-[10%] rounded-[60%_40%_30%_70%/60%_30%_70%_40%] bg-gradient-to-bl from-white/5 via-white/5 to-transparent blur-[35px] md:blur-[45px] will-change-transform"
                animate={{ 
-                 borderRadius: ["60% 40% 30% 70% / 60% 30% 70% 40%", "40% 60% 70% 30% / 40% 50% 60% 50%", "60% 40% 30% 70% / 60% 30% 70% 40%"],
                  rotate: -180 
               }}
               transition={{
-                borderRadius: { duration: 25, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" },
                 rotate: { duration: 50, repeat: Infinity, ease: "linear" }
               }}
            />
            
-           {/* The Hollow Core */}
-           <div className="absolute inset-[30%] bg-[#050505] rounded-full blur-[50px]" />
+           {/* The Hollow Core - Reduced blur */}
+           <div className="absolute inset-[30%] bg-[#050505] rounded-full blur-[30px] md:blur-[40px]" />
            
            {/* Thin Orbit Ring */}
            <motion.div 
-              className="absolute inset-[15%] rounded-full border border-white/5 opacity-30"
-              animate={{ rotate: -360, scale: [1, 1.02, 1] }}
+              className="absolute inset-[15%] rounded-full border border-white/5 opacity-30 will-change-transform"
+              animate={{ rotate: -360 }}
               transition={{ 
-                rotate: { duration: 80, ease: "linear", repeat: Infinity },
-                scale: { duration: 10, ease: "easeInOut", repeat: Infinity }
+                rotate: { duration: 80, ease: "linear", repeat: Infinity }
               }}
            />
         </motion.div>

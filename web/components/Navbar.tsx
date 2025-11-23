@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import {SuiLogo} from './Logos';
 import { usePathname, useRouter } from 'next/navigation';
 import { ArrowRight, Wallet, ChevronDown, LogOut } from 'lucide-react';
 import { useCurrentWallet, useWallets, useConnectWallet, useDisconnectWallet, useCurrentAccount } from '@mysten/dapp-kit';
@@ -86,7 +87,7 @@ const Navbar: React.FC = () => {
   return (
     <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-start px-6 py-6 md:px-12 md:py-8 pointer-events-none">
       {/* Empty div for spacing balance */}
-      <div className="hidden md:block w-32"></div>
+      {/* <div className="hidden md:block w-54"></div> */}
 
       {/* Centered Pill Nav */}
       <nav className="pointer-events-auto bg-white/10 backdrop-blur-md border border-white/10 rounded-full px-1 py-1 flex items-center gap-1 shadow-2xl">
@@ -140,8 +141,22 @@ const Navbar: React.FC = () => {
         </Link>
       </nav>
 
-      {/* Right Wallet Connection */}
-      <div className="pointer-events-auto relative" ref={menuRef}>
+      {/* Right Side - Faucet & Wallet */}
+      <div className="pointer-events-auto flex items-center gap-3">
+        {/* Faucet Button */}
+        <a
+          href="https://faucet.sui.io"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="px-4 py-2.5 rounded-full font-sans font-medium text-sm flex items-center gap-2 transition-all shadow-[0_0_20px_rgba(255,255,255,0.2)] bg-white/10 backdrop-blur-md border border-white/20 text-white hover:bg-white/20 active:scale-95"
+          title="Sui Faucet"
+        >
+          <SuiLogo className="w-8 h-auto" />
+          <span className="hidden sm:inline">Faucet</span>
+        </a>
+
+        {/* Wallet Connection */}
+        <div className="relative" ref={menuRef}>
         {isConnected && account ? (
           <button
             onClick={() => setShowWalletMenu(!showWalletMenu)}
@@ -234,6 +249,7 @@ const Navbar: React.FC = () => {
             )}
           </div>
         )}
+        </div>
       </div>
     </header>
   );

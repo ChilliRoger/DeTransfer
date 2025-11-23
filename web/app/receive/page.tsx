@@ -6,27 +6,23 @@ import { motion } from 'framer-motion'
 export default function Receive() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center pt-32 pb-32 px-4 md:px-6 relative overflow-hidden bg-[#050505]">
-      {/* Blob Animation Background */}
+      {/* Blob Animation Background - Optimized */}
       <div className="absolute inset-0 pointer-events-none">
         <motion.div 
           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] md:w-[900px] md:h-[900px]"
         >
           <motion.div 
-            className="absolute inset-0"
+            className="absolute inset-0 will-change-transform"
             animate={{
               rotate: 360,
-              scale: [1, 1.2, 0.9, 1.1, 1],
-              x: [0, 50, -35, 60, -25, 0],
-              y: [0, -45, 35, -55, 40, 0],
+              scale: [1, 1.1, 0.95, 1.05, 1],
             }}
             transition={{
               rotate: { duration: 55, ease: "linear", repeat: Infinity },
-              scale: { duration: 28, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
-              x: { duration: 36, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
-              y: { duration: 42, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              scale: { duration: 20, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
             }}
           >
-            <div className="w-full h-full rounded-full bg-[conic-gradient(from_0deg,transparent_0deg,#2A70F1_120deg,transparent_240deg)] blur-[110px] md:blur-[150px] opacity-40 mix-blend-screen" />
+            <div className="w-full h-full rounded-full bg-[conic-gradient(from_0deg,transparent_0deg,#2A70F1_120deg,transparent_240deg)] blur-[60px] md:blur-[80px] opacity-35 mix-blend-screen" />
           </motion.div>
         </motion.div>
       </div>

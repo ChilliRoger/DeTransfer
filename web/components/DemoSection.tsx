@@ -29,9 +29,9 @@ const DemoSection: React.FC = () => {
 
   return (
     <section id="workflow" className="bg-gradient-to-b from-[#050505] via-[#050505] to-[#050505] py-24 md:py-32 pb-32 px-4 overflow-x-auto select-none relative">
-      {/* Background Glow */}
-      <div className="absolute top-0 left-1/4 w-1/3 h-full bg-eco-accent/5 blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-0 right-1/4 w-1/3 h-full bg-blue-500/5 blur-[120px] pointer-events-none" />
+      {/* Background Glow - Reduced blur */}
+      <div className="absolute top-0 left-1/4 w-1/3 h-full bg-eco-accent/5 blur-[80px] pointer-events-none" />
+      <div className="absolute bottom-0 right-1/4 w-1/3 h-full bg-blue-500/5 blur-[80px] pointer-events-none" />
 
       <div className="min-w-[1200px] max-w-7xl mx-auto relative h-[850px]">
         

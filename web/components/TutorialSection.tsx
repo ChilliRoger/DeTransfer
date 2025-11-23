@@ -7,19 +7,28 @@ import { Wallet, Upload, Lock, Download, Share2, CheckCircle, ArrowRight, FileTe
 // --- Utility Components ---
 const GlyphLabel: React.FC<{ text: string, className?: string }> = ({ text, className = "" }) => {
     const [display, setDisplay] = useState(text);
+    const frameRef = useRef<number | null>(null);
     
     useEffect(() => {
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<>/[]{}*&^%$#@!';
       let iterations = 0;
-      const interval = setInterval(() => {
+      
+      const animate = () => {
         setDisplay(text.split('').map((char, index) => {
           if (index < iterations) return text[index];
           return chars[Math.floor(Math.random() * chars.length)];
         }).join(''));
-        if (iterations >= text.length) clearInterval(interval);
-        iterations += 1/2; 
-      }, 30);
-      return () => clearInterval(interval);
+        
+        if (iterations < text.length) {
+          iterations += 0.5;
+          frameRef.current = requestAnimationFrame(animate);
+        }
+      };
+      
+      frameRef.current = requestAnimationFrame(animate);
+      return () => {
+        if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      };
     }, [text]);
   
     return <span className={`font-mono ${className}`}>{display}</span>;

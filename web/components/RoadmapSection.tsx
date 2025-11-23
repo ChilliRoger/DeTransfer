@@ -49,28 +49,28 @@ const milestones = [
     id: '01',
     quarter: 'Q1 2025',
     title: 'Genesis',
-    description: 'Mainnet launch initiated. Establishing core liquidity pools and validator sets. The foundation of the network is secured.',
+    description: 'Seal encryption and Walrus storage are now implemented, enabling the complete sender-side process of encrypting & transferring files.',
     status: 'completed'
   },
   {
     id: '02',
     quarter: 'Q2 2025',
     title: 'Convergence',
-    description: 'Activation of cross-chain messaging protocols. Portal bridge integration allows seamless asset migration from L1s.',
+    description: 'Integrated Seal key servers in threshold mode. Indexer-ready metadata model for decentralized inbound file discovery.',
     status: 'active'
   },
   {
     id: '03',
     quarter: 'Q3 2025',
     title: 'Expansion',
-    description: 'Release of the Developer SDK and Institutional API. Enabling programmable liquidity for third-party dApps.',
+    description: 'Integrate Nautilus to run malware/virus checks and authenticity scoring. Produce cryptographic proofs and attach them to transfers.',
     status: 'upcoming'
   },
   {
     id: '04',
     quarter: 'Q4 2025',
     title: 'Ubiquity',
-    description: 'Global settlement layer activation. Decentralized governance transition begins. The economy becomes self-sustaining.',
+    description: 'On-chain proof publishing on Sui for transparent, verifiable transfers. Move toward decentralized governance and policy control.',
     status: 'upcoming'
   }
 ];
@@ -85,42 +85,34 @@ const RoadmapSection: React.FC = () => {
         <motion.div 
           className="absolute top-1/2 right-0 translate-x-1/4 -translate-y-1/2 w-[500px] h-[500px] md:w-[700px] md:h-[700px]"
         >
-          {/* Primary Blue Blob */}
+          {/* Primary Blue Blob - Optimized */}
           <motion.div 
-            className="absolute inset-0"
+            className="absolute inset-0 will-change-transform"
             animate={{
               rotate: 360,
-              scale: [1, 1.1, 0.95, 1.05, 1],
-              x: [0, 20, -15, 25, -10, 0],
-              y: [0, -20, 15, -25, 10, 0],
+              scale: [1, 1.05, 0.98, 1.02, 1],
             }}
             transition={{
               rotate: { duration: 80, ease: "linear", repeat: Infinity },
-              scale: { duration: 40, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
-              x: { duration: 50, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
-              y: { duration: 55, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              scale: { duration: 30, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
             }}
           >
-            <div className="w-full h-full rounded-full bg-[conic-gradient(from_0deg,transparent_0deg,#2A70F1_120deg,transparent_240deg)] blur-[140px] md:blur-[180px] opacity-15 mix-blend-screen" />
+            <div className="w-full h-full rounded-full bg-[conic-gradient(from_0deg,transparent_0deg,#2A70F1_120deg,transparent_240deg)] blur-[80px] md:blur-[120px] opacity-15 mix-blend-screen" />
           </motion.div>
 
-          {/* Secondary Cyan Blob - Counter Movement */}
+          {/* Secondary Cyan Blob - Optimized */}
           <motion.div 
-            className="absolute inset-0"
+            className="absolute inset-0 will-change-transform"
             animate={{
               rotate: -360,
-              scale: [1, 0.95, 1.05, 0.98, 1],
-              x: [0, -15, 12, -20, 8, 0],
-              y: [0, 18, -12, 22, -15, 0],
+              scale: [1, 0.98, 1.02, 0.99, 1],
             }}
             transition={{
               rotate: { duration: 100, ease: "linear", repeat: Infinity },
-              scale: { duration: 45, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
-              x: { duration: 55, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
-              y: { duration: 60, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
+              scale: { duration: 35, ease: "easeInOut", repeat: Infinity, repeatType: "mirror" },
             }}
           >
-            <div className="w-full h-full rounded-full bg-[conic-gradient(from_180deg,transparent_0deg,#22d3ee_90deg,transparent_210deg)] blur-[140px] md:blur-[170px] opacity-10 mix-blend-screen" />
+            <div className="w-full h-full rounded-full bg-[conic-gradient(from_180deg,transparent_0deg,#22d3ee_90deg,transparent_210deg)] blur-[80px] md:blur-[120px] opacity-10 mix-blend-screen" />
           </motion.div>
         </motion.div>
       </div>

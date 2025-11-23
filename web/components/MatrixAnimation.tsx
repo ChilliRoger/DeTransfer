@@ -27,7 +27,8 @@ const MatrixAnimation: React.FC<MatrixAnimationProps> = ({
       return;
     }
 
-    const interval = setInterval(() => {
+    let frameId: number;
+    const animate = () => {
       setGrid(prev =>
         prev.map(row =>
           row.map(() => {
@@ -40,9 +41,13 @@ const MatrixAnimation: React.FC<MatrixAnimationProps> = ({
           })
         )
       );
-    }, 100); // slightly faster animation
+      frameId = requestAnimationFrame(animate);
+    };
 
-    return () => clearInterval(interval);
+    frameId = requestAnimationFrame(animate);
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
   }, [active, gridSize]);
 
   return (
